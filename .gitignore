@@ -117,7 +117,7 @@ docs/
 doc_assistant/data
 notebooks
 doc_assistant/tests
-
+test
 # Spyder project settings
 .spyderproject
 .spyproject
