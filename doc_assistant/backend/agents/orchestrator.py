@@ -36,7 +36,7 @@ class AgentOrchestrator:
         # Si des filtres sont actifs, utiliser la recherche filtrée
         if search_filter and search_filter.has_filters():
             kb_ids = search_filter.get_kb_ids()
-            st.info(f"🔎 Recherche filtrée sur {len(kb_ids)} bases")
+            st.info(f"🔎 Recherche filtrée sur {len(kb_ids)} bases: {kb_ids}")
             search_contexts = await self._filtered_search(message, search_filter)
             
             if not search_contexts:

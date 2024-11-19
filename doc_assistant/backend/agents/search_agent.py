@@ -5,22 +5,50 @@ from backend.types.response_types import SearchContext, DocumentReference
 from dsrag.database.vector.types import MetadataFilter
 from dsrag.knowledge_base import KnowledgeBase
 import streamlit as st
+from nltk.tokenize import regexp_tokenize
+from nltk.corpus import stopwords
+import nltk
+import re
+from collections import defaultdict
+
+# Initialisation correcte des ressources NLTK
+def initialize_nltk():
+    """Initialise les ressources NLTK nécessaires"""
+    required_resources = {
+        'punkt': 'tokenizers/punkt',
+        'stopwords': 'corpora/stopwords'
+    }
+    
+    for resource, path in required_resources.items():
+        try:
+            nltk.data.find(path)
+        except LookupError:
+            st.info(f"📥 Téléchargement de la ressource NLTK : {resource}")
+            try:
+                nltk.download(resource, quiet=True)
+            except Exception as e:
+                st.error(f"❌ Erreur lors du téléchargement de {resource}: {str(e)}")
+                # Utiliser une alternative sans NLTK pour le tokenization
+                return False
+    return True
 
 class SearchMode(Enum):
-    PRECISE = "precise"       # Haute précision, peu de résultats
-    BALANCED = "balanced"     # Équilibre précision/rappel
-    THOROUGH = "thorough"    # Plus de résultats, moins stricts sur la pertinence
-    EXHAUSTIVE = "exhaustive" # Tous les résultats possiblement pertinents
+    PRECISE = "precise"       
+    BALANCED = "balanced"     
+    THOROUGH = "thorough"    
+    EXHAUSTIVE = "exhaustive" 
 
 @dataclass
 class SearchConfig:
     mode: SearchMode = SearchMode.BALANCED
     min_relevance: float = 0.6
     max_segments_per_doc: int = 3
-    adaptive_recall: bool = True  # Ajuste automatiquement les paramètres si pas assez de résultats
+    adaptive_recall: bool = True
+    enable_fallback: bool = True      # Active la recherche de fallback combinée
+    fallback_min_relevance: float = 0.3  # Seuil de pertinence pour les résultats de fallback
+    fallback_search_limit: int = 200  # Limite pour la recherche de fallback
 
 class SearchAgent:
-    # Paramètres RSE optimisés pour différents modes de recherche
     RSE_CONFIGS = {
         SearchMode.PRECISE: {
             'max_length': 10,
@@ -66,18 +94,213 @@ class SearchAgent:
 
     def __init__(self, kb_manager):
         self.kb_manager = kb_manager
+        self.use_nltk = initialize_nltk()
+        
+        # Charger les stop words ou utiliser une liste basique si NLTK échoue
+        try:
+            self.stop_words = set(stopwords.words('english') + stopwords.words('french'))
+        except:
+            # Liste basique de stop words en cas d'échec de NLTK
+            self.stop_words = set([
+                'le', 'la', 'les', 'de', 'du', 'des', 'un', 'une', 'et', 'ou', 'mais',
+                'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for'
+            ])
+    
 
     def _get_rse_params(self, mode: SearchMode) -> dict:
-        """Récupère les paramètres RSE pour un mode donné"""
         return self.RSE_CONFIGS[mode].copy()
 
     def _adjust_params_for_recall(self, params: dict) -> dict:
-        """Ajuste les paramètres pour augmenter le rappel"""
         adjusted = params.copy()
         adjusted['minimum_value'] = max(0.1, params['minimum_value'] - 0.2)
         adjusted['overall_max_length'] = int(params['overall_max_length'] * 1.5)
         adjusted['irrelevant_chunk_penalty'] *= 0.8
         return adjusted
+
+    def _tokenize_text(self, text: str) -> List[str]:
+        """Tokenize le texte avec fallback si NLTK n'est pas disponible"""
+        text = self._preprocess_text(text)
+        if self.use_nltk:
+            try:
+                return regexp_tokenize(text, pattern=r'\w+')
+            except:
+                pass
+        # Fallback simple si NLTK n'est pas disponible
+        return text.split()
+
+    def _preprocess_text(self, text: str) -> str:
+        """Prétraite le texte pour la recherche"""
+        text = text.lower()
+        text = re.sub(r'[^\w\s]', ' ', text)
+        text = re.sub(r'\s+', ' ', text)
+        return text.strip()
+
+    def _get_keywords(self, text: str) -> List[str]:
+        """Extrait les mots-clés significatifs avec gestion d'erreur robuste"""
+        text = self._preprocess_text(text)
+        tokens = self._tokenize_text(text)
+        keywords = [word for word in tokens 
+                   if word not in self.stop_words 
+                   and len(word) > 2]
+        return list(set(keywords))
+
+    def _keyword_search_score(self, text: str, keywords: List[str]) -> float:
+        """Calcule un score de pertinence basé sur les mots-clés"""
+        if not keywords:
+            return 0.0
+            
+        text = self._preprocess_text(text)
+        text_words = set(word for word in text.split() if word not in self.stop_words)
+        
+        matches = sum(1 for keyword in keywords if keyword in text_words)
+        score = matches / len(keywords)
+        
+        for i in range(len(keywords) - 1):
+            if ' '.join(keywords[i:i+2]) in text:
+                score += 0.1
+                
+        return min(1.0, score)
+
+    async def _combined_fallback_search(
+        self,
+        query: str,
+        kb: KnowledgeBase,
+        metadata_filter: Optional[MetadataFilter],
+        config: SearchConfig
+    ) -> List[DocumentReference]:
+        """
+        Effectue une recherche combinée utilisant kb.search() et la recherche par mots-clés
+        """
+        st.info("🔍 Activation de la recherche combinée (kb.search + mots-clés)")
+        
+        # Extraction des mots-clés
+        keywords = self._get_keywords(query)
+        if not keywords:
+            st.warning("Aucun mot-clé significatif trouvé dans la requête")
+            return []
+
+        st.info(f"Mots-clés identifiés: {', '.join(keywords)}")
+        
+        # 1. Recherche avec kb.search()
+        kb_results = []
+        try:
+            # Correction: passer query directement sans le mettre dans une liste
+            kb_search_results = kb.search(query, config.fallback_search_limit, metadata_filter)
+            for result in kb_search_results:
+                doc_id = result["metadata"]["doc_id"]
+                chunk_index = result["metadata"]["chunk_index"]
+                similarity = result["similarity"]
+                
+                if similarity >= config.fallback_min_relevance:
+                    chunk_text = kb.chunk_db.get_chunk_text(doc_id, chunk_index)
+                    doc_title = kb.chunk_db.get_document_title(doc_id, chunk_index) or ""
+                    doc_info = kb.chunk_db.get_document(doc_id)
+                    page_numbers = kb.chunk_db.get_chunk_page_numbers(doc_id, chunk_index)
+                    
+                    kb_results.append(DocumentReference(
+                        doc_id=doc_id,
+                        doc_title=doc_title,
+                        text=chunk_text,
+                        relevance_score=similarity,
+                        page_numbers=page_numbers,
+                        metadata=doc_info.get('metadata', {}) if doc_info else {}
+                    ))
+        except Exception as e:
+            st.warning(f"Erreur lors de la recherche kb.search(): {str(e)}")
+            st.info("🔄 Continuation avec la recherche par mots-clés uniquement")
+        
+        # 2. Recherche par mots-clés
+        keyword_results = []
+        doc_ids = kb.chunk_db.get_all_doc_ids()
+        
+        for doc_id in doc_ids:
+            if metadata_filter:
+                doc_info = kb.chunk_db.get_document(doc_id)
+                if not self._check_metadata_filter(doc_info, metadata_filter):
+                    continue
+            
+            chunk_index = 0
+            while True:
+                chunk_text = kb.chunk_db.get_chunk_text(doc_id, chunk_index)
+                if not chunk_text:
+                    break
+                
+                score = self._keyword_search_score(chunk_text, keywords)
+                
+                if score >= config.fallback_min_relevance:
+                    doc_title = kb.chunk_db.get_document_title(doc_id, chunk_index) or ""
+                    doc_info = kb.chunk_db.get_document(doc_id)
+                    page_numbers = kb.chunk_db.get_chunk_page_numbers(doc_id, chunk_index)
+                    
+                    keyword_results.append(DocumentReference(
+                        doc_id=doc_id,
+                        doc_title=doc_title,
+                        text=chunk_text,
+                        relevance_score=score,
+                        page_numbers=page_numbers,
+                        metadata=doc_info.get('metadata', {}) if doc_info else {}
+                    ))
+                
+                chunk_index += 1
+
+        # Fusionner et déduplicater les résultats
+        all_results = []
+        seen_chunks = set()
+        
+        # Fonction helper pour créer une clé unique pour chaque chunk
+        def get_chunk_key(result):
+            return f"{result.doc_id}_{result.text[:100]}"
+        
+        # Ajouter d'abord les résultats de kb.search()
+        for result in kb_results:
+            chunk_key = get_chunk_key(result)
+            if chunk_key not in seen_chunks:
+                seen_chunks.add(chunk_key)
+                all_results.append(result)
+
+        # Ajouter ensuite les résultats de la recherche par mots-clés
+        for result in keyword_results:
+            chunk_key = get_chunk_key(result)
+            if chunk_key not in seen_chunks:
+                seen_chunks.add(chunk_key)
+                # Ajuster le score pour donner une légère préférence aux résultats de kb.search()
+                result.relevance_score *= 0.9
+                all_results.append(result)
+
+        # Trier par pertinence
+        all_results.sort(key=lambda x: x.relevance_score, reverse=True)
+        
+        # Limiter le nombre de segments par document
+        if config.max_segments_per_doc > 0:
+            filtered_results = []
+            doc_count = defaultdict(int)
+            
+            for result in all_results:
+                if doc_count[result.doc_id] < config.max_segments_per_doc:
+                    filtered_results.append(result)
+                    doc_count[result.doc_id] += 1
+            
+            all_results = filtered_results
+
+        return all_results
+
+    def _check_metadata_filter(self, doc_info: Optional[Dict], metadata_filter: MetadataFilter) -> bool:
+        """Vérifie si un document correspond au filtre de métadonnées"""
+        if not doc_info or not metadata_filter:
+            return True
+            
+        field = metadata_filter["field"]
+        operator = metadata_filter["operator"]
+        value = metadata_filter["value"]
+        
+        if field == "doc_id":
+            doc_id = doc_info["id"]
+            if operator == "equals":
+                return doc_id == value
+            elif operator == "in":
+                return doc_id in value
+        
+        return True
 
     async def search(
         self,
@@ -87,13 +310,7 @@ class SearchAgent:
         config: Optional[SearchConfig] = None
     ) -> List[DocumentReference]:
         """
-        Effectue une recherche avec gestion adaptative de la qualité des résultats
-        
-        Args:
-            query: La requête de recherche
-            kb: La base de connaissances
-            filters: Filtres de métadonnées optionnels
-            config: Configuration de la recherche
+        Effectue une recherche avec stratégie de fallback améliorée
         """
         if config is None:
             config = SearchConfig()
@@ -106,7 +323,7 @@ class SearchAgent:
                 value=filters.get("value", "")
             )
 
-        # Tentative initiale avec les paramètres du mode choisi
+        # 1. Tentative initiale avec recherche sémantique
         rse_params = self._get_rse_params(config.mode)
         results = kb.query(
             search_queries=[query],
@@ -114,9 +331,12 @@ class SearchAgent:
             rse_params=rse_params
         )
 
-        # Si pas assez de résultats et adaptive_recall activé, essayer avec des paramètres plus souples
-        if not results and config.adaptive_recall:
-            st.info("Adaptation des paramètres pour une recherche plus approfondie...")
+        has_valid_results = bool(results and any(r.get('score', 0) >= config.min_relevance for r in results))
+
+        # 2. Si nécessaire, essayer avec des paramètres plus souples
+        if not has_valid_results and config.adaptive_recall:
+            st.info("🔄 Adaptation des paramètres de recherche sémantique...")
+            
             for mode in [SearchMode.BALANCED, SearchMode.THOROUGH, SearchMode.EXHAUSTIVE]:
                 if mode.value <= config.mode.value:
                     continue
@@ -130,18 +350,40 @@ class SearchAgent:
                     metadata_filter=metadata_filter,
                     rse_params=rse_params
                 )
-                if results:
+                
+                if results and any(r.get('score', 0) >= config.min_relevance for r in results):
+                    has_valid_results = True
+                    st.success("✅ Résultats trouvés avec paramètres adaptés")
                     break
 
-        if not results:
+        # 3. Si toujours aucun résultat valide, activer le fallback
+        if not has_valid_results and config.enable_fallback:
+            st.warning("⚠️ Aucun résultat pertinent trouvé - Activation de la recherche alternative")
+            fallback_results = await self._combined_fallback_search(
+                query=query,
+                kb=kb,
+                metadata_filter=metadata_filter,
+                config=config
+            )
+            if fallback_results:
+                st.success(f"✅ {len(fallback_results)} résultats trouvés via recherche alternative")
+                return fallback_results
+            
+            st.error("❌ Aucun résultat trouvé même après recherche alternative")
             return []
 
-        # Conversion des résultats en DocumentReference
+        # 4. Traitement des résultats sémantiques (uniquement si nous avons des résultats valides)
+        if not has_valid_results:
+            return []
+
+        # Conversion des résultats sémantiques en DocumentReference
         doc_references = []
         for r in results:
-            # Récupération du titre et des métadonnées du document
+            if r.get('score', 0) < config.min_relevance:
+                continue
+                
             doc_title = kb.chunk_db.get_document_title(r["doc_id"], r["chunk_start"]) or ""
-            doc_metadata = kb.chunk_db.get_document(r["doc_id"]).get("metadata", {})
+            doc_info = kb.chunk_db.get_document(r["doc_id"])
             
             doc_references.append(
                 DocumentReference(
@@ -150,32 +392,26 @@ class SearchAgent:
                     text=r["text"],
                     relevance_score=r["score"],
                     page_numbers=(r.get("chunk_page_start"), r.get("chunk_page_end")),
-                    metadata=doc_metadata
+                    metadata=doc_info.get('metadata', {}) if doc_info else {}
                 )
             )
 
-        # Filtrage des résultats selon les critères de qualité
-        filtered_refs = [
-            ref for ref in doc_references 
-            if ref.relevance_score >= config.min_relevance
-        ]
-
-        # Limitation du nombre de segments par document si nécessaire
-        if config.max_segments_per_doc > 0:
-            doc_segments = {}
-            for ref in filtered_refs:
-                if ref.doc_id not in doc_segments:
-                    doc_segments[ref.doc_id] = []
-                if len(doc_segments[ref.doc_id]) < config.max_segments_per_doc:
-                    doc_segments[ref.doc_id].append(ref)
+        # Limitation du nombre de segments par document
+        if doc_references and config.max_segments_per_doc > 0:
+            filtered_refs = []
+            doc_count = defaultdict(int)
             
-            filtered_refs = [
-                ref for segments in doc_segments.values() 
-                for ref in segments
-            ]
+            for ref in sorted(doc_references, key=lambda x: x.relevance_score, reverse=True):
+                if doc_count[ref.doc_id] < config.max_segments_per_doc:
+                    filtered_refs.append(ref)
+                    doc_count[ref.doc_id] += 1
+            
+            doc_references = filtered_refs
 
-        return sorted(filtered_refs, key=lambda x: x.relevance_score, reverse=True)
-
+        if doc_references:
+            st.success(f"✅ {len(doc_references)} résultats pertinents trouvés")
+        return sorted(doc_references, key=lambda x: x.relevance_score, reverse=True)
+    
     async def multi_kb_search(
         self,
         query: str,
@@ -184,18 +420,25 @@ class SearchAgent:
     ) -> List[SearchContext]:
         """
         Effectue une recherche sur plusieurs bases de connaissances
-        
-        Args:
-            query: La requête de recherche
-            kb_mappings: Liste des mappings de bases de connaissances
-            config: Configuration de la recherche
         """
         search_contexts = []
+        total_kbs = len(kb_mappings)
         
-        for mapping in kb_mappings:
+        st.info(f"🔍 Recherche dans {total_kbs} bases de connaissances")
+        
+        for idx, mapping in enumerate(kb_mappings, 1):
+            # Charger les informations de la base
             kb = self.kb_manager.load_knowledge_base(mapping.kb_id)
             if not kb:
+                st.warning(f"⚠️ Base {mapping.kb_id} non trouvée ou inaccessible")
                 continue
+                
+            # Récupérer le titre de la base pour les messages
+            kb_info = next((kb for kb in self.kb_manager.list_knowledge_bases() 
+                        if kb["id"] == mapping.kb_id), None)
+            kb_title = kb_info["title"] if kb_info else mapping.kb_id
+            
+            st.info(f"📚 [{idx}/{total_kbs}] Recherche dans la base: {kb_title} (score de mapping: {mapping.relevance_score:.2f})")
 
             # Ajuster la configuration en fonction du score de mapping
             if config:
@@ -203,11 +446,15 @@ class SearchAgent:
                     mode=config.mode,
                     min_relevance=config.min_relevance * mapping.relevance_score,
                     max_segments_per_doc=config.max_segments_per_doc,
-                    adaptive_recall=config.adaptive_recall
+                    adaptive_recall=config.adaptive_recall,
+                    enable_fallback=config.enable_fallback,
+                    fallback_min_relevance=config.fallback_min_relevance,
+                    fallback_search_limit=config.fallback_search_limit
                 )
             else:
                 adjusted_config = None
 
+            # Effectuer la recherche
             results = await self.search(
                 query=query,
                 kb=kb,
@@ -215,10 +462,21 @@ class SearchAgent:
             )
 
             if results:
+                st.success(f"✅ {len(results)} résultats trouvés dans {kb_title}")
                 search_contexts.append(SearchContext(
                     kb_id=mapping.kb_id,
                     results=results,
-                    mapping_score=mapping.relevance_score
+                    mapping_score=mapping.relevance_score,
+                    kb_title=kb_title
                 ))
+            else:
+                st.warning(f"❌ Aucun résultat trouvé dans {kb_title}")
+
+        # Résumé final
+        total_results = sum(len(ctx.results) for ctx in search_contexts)
+        if search_contexts:
+            st.success(f"🎯 Total: {total_results} résultats trouvés dans {len(search_contexts)} bases")
+        else:
+            st.error("❌ Aucun résultat trouvé dans l'ensemble des bases")
 
         return search_contexts

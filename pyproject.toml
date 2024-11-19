@@ -11,6 +11,7 @@ dsrag = "^0.3.8"
 chroma = "^0.2.0"
 streamlit = "^1.39.0"
 python-dotenv = "^1.0.1"
+nltk = "^3.9.1"
 
 
 [build-system]
