@@ -1,0 +1,22 @@
+# Core dependencies
+streamlit
+dsrag
+chromadb
+openai
+anthropic
+cohere
+voyageai
+numpy
+pandas
+
+# UI dependencies
+streamlit-chat
+
+# Testing
+pytest
+pytest-asyncio
+
+# Development
+black
+flake8
+mypy

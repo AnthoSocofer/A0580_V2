@@ -1,0 +1,149 @@
+from dataclasses import dataclass
+from typing import List, Dict, Any, Optional
+from backend.kb_management.manager import KnowledgeBaseManager
+
+@dataclass
+class KBMappingResult:
+    kb_id: str
+    relevance_score: float
+    reasoning: str
+    confidence_factors: Dict[str, float]
+
+class QueryKBMapper:
+    """
+    Agent responsable de mapper les questions utilisateur aux bases de connaissances pertinentes.
+    Utilise une approche multi-critères pour évaluer la pertinence des bases.
+    """
+    
+    def __init__(self, kb_manager: KnowledgeBaseManager, llm_service: Any):
+        self.kb_manager = kb_manager
+        self.llm = llm_service
+        
+    async def map_query_to_kbs(
+        self, 
+        query: str, 
+        min_relevance: float = 0.6,
+        max_kbs: int = 3
+    ) -> List[KBMappingResult]:
+        """
+        Mappe une question aux bases de connaissances les plus pertinentes
+        
+        Args:
+            query: Question de l'utilisateur
+            min_relevance: Score minimum de pertinence pour inclure une base
+            max_kbs: Nombre maximum de bases à retourner
+            
+        Returns:
+            Liste des bases de connaissances pertinentes avec leurs scores
+        """
+        available_kbs = self.kb_manager.list_knowledge_bases()
+        
+        # Construction du prompt pour l'analyse
+        prompt = self._build_analysis_prompt(query, available_kbs)
+        
+        # Obtenir l'analyse structurée du LLM
+        analysis = await self.llm.generate_structured_output(prompt, {
+            "mappings": [
+                {
+                    "kb_id": "str",
+                    "relevance_score": "float",
+                    "reasoning": "str",
+                    "confidence_factors": {
+                        "topic_match": "float",  # Correspondance thématique
+                        "specificity_match": "float",  # Niveau de spécificité
+                        "coverage": "float",  # Couverture du sujet
+                        "context_relevance": "float"  # Pertinence contextuelle
+                    }
+                }
+            ]
+        })
+        
+        # Conversion en objets KBMappingResult
+        mapping_results = [
+            KBMappingResult(
+                kb_id=mapping["kb_id"],
+                relevance_score=mapping["relevance_score"],
+                reasoning=mapping["reasoning"],
+                confidence_factors=mapping["confidence_factors"]
+            )
+            for mapping in analysis["mappings"]
+            if mapping["relevance_score"] >= min_relevance
+        ]
+        
+        # Trier par score de pertinence et limiter le nombre de résultats
+        sorted_results = sorted(
+            mapping_results,
+            key=lambda x: x.relevance_score,
+            reverse=True
+        )[:max_kbs]
+        
+        return sorted_results
+    
+    def _build_analysis_prompt(self, query: str, available_kbs: List[Dict[str, Any]]) -> str:
+        """
+        Construit un prompt détaillé pour l'analyse de pertinence
+        """
+        kb_descriptions = self._format_kb_descriptions(available_kbs)
+        
+        return f"""
+        En tant qu'expert en analyse documentaire, évalue la pertinence de la question suivante 
+        par rapport aux bases de connaissances disponibles.
+
+        Question utilisateur: "{query}"
+
+        Bases de connaissances disponibles:
+        {kb_descriptions}
+
+        Pour chaque base, analyse:
+        1. La correspondance thématique avec la question
+        2. L'adéquation du niveau de spécificité
+        3. La probabilité que la base contienne l'information recherchée
+        4. La pertinence du contexte global
+
+        Pour chaque base pertinente (score > 0.6), fournis:
+        - Un score global de pertinence (0-1)
+        - Une explication détaillée du raisonnement
+        - Des scores détaillés pour chaque facteur d'analyse
+
+        Important:
+        - Concentre-toi sur les bases les plus pertinentes
+        - Justifie clairement les scores attribués
+        - Tiens compte du contexte global de la question
+        """
+    
+    def _format_kb_descriptions(self, kbs: List[Dict[str, Any]]) -> str:
+        """
+        Formate les descriptions des bases de manière structurée
+        """
+        formatted = []
+        for kb in kbs:
+            kb_info = [
+                f"ID: {kb['id']}",
+                f"Titre: {kb['title']}",
+                f"Description: {kb['description']}",
+                f"Langue: {kb['language']}"
+            ]
+            formatted.append("\n".join(kb_info))
+        
+        return "\n\n".join(formatted)
+
+    def _adjust_scores_for_language(
+        self,
+        results: List[KBMappingResult],
+        query_language: str
+    ) -> List[KBMappingResult]:
+        """
+        Ajuste les scores en fonction de la correspondance linguistique
+        """
+        for result in results:
+            kb_info = next(
+                (kb for kb in self.kb_manager.list_knowledge_bases() 
+                 if kb["id"] == result.kb_id),
+                None
+            )
+            if kb_info and kb_info["language"] != query_language:
+                # Pénaliser légèrement les bases dans une langue différente
+                result.relevance_score *= 0.9
+                result.reasoning += " (Ajustement linguistique appliqué)"
+        
+        return results

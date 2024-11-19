@@ -1,0 +1,27 @@
+sequenceDiagram
+    participant U as User
+    participant O as Orchestrator
+    participant QM as QueryKBMapper
+    participant SA as SearchAgent
+    participant CA as ChatAgent
+    participant KB as KnowledgeBase
+
+    alt Avec Filtres
+        U->>O: process_message(query, filter)
+        O->>SA: _filtered_search(query, filter)
+        SA->>KB: query(filtered_docs)
+        KB-->>SA: search_results
+        SA-->>O: search_contexts
+        O->>CA: generate_response(contexts)
+        CA-->>U: formatted_response
+    else Sans Filtres
+        U->>O: process_message(query)
+        O->>QM: map_query_to_kbs(query)
+        QM-->>O: kb_mappings
+        O->>SA: multi_kb_search(query, mappings)
+        SA->>KB: query(mapped_kbs)
+        KB-->>SA: search_results
+        SA-->>O: search_contexts
+        O->>CA: generate_response(contexts)
+        CA-->>U: formatted_response
+    end
