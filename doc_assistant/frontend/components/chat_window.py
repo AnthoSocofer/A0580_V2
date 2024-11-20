@@ -23,6 +23,10 @@ class ChatWindow:
             "content": prompt
         })
         
+        # Ensure filter_kb_select exists in session state to prevent errors
+        if 'filter_kb_select' not in st.session_state:
+            st.session_state.filter_kb_select = []
+        
         # Obtenir la réponse de l'orchestrateur
         response = await self.orchestrator.process_message(prompt, search_filter)
         

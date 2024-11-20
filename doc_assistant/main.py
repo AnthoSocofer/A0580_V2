@@ -44,33 +44,39 @@ async def main():
         st.title("Assistant Documentaire")
 
         with st.sidebar:
-            tab1, tab2, tab3, tab4, tab5 = st.tabs([
+            tab1, tab2 = st.tabs([
                 "Filtrer", 
-                "Créer Base", 
-                "Ajouter Documents",
-                "Supprimer Documents",
-                "Supprimer Base"
+                "Gestion des bases de connaissances"
             ])
             
             with tab1:
                 filter_tab = FilterTab(kb_manager)
                 active_filters = filter_tab.render()
-                
-            with tab2:
-                kb_creation = KBCreationComponent(kb_manager)
-                kb_creation.render()
-                
-            with tab3:
-                doc_ingestion = DocumentIngestionComponent(kb_manager)
-                doc_ingestion.render()
-                
-            with tab4:
-                delete_docs = DeleteDocsComponent(kb_manager)
-                delete_docs.render()
 
-            with tab5:
-                delete_kb = DeleteKBComponent(kb_manager)
-                delete_kb.render()
+            with tab2:
+                subtab1, subtab2, subtab3, subtab4 = st.tabs([
+                    "Créer Base",
+                    "Ajouter Documents",
+                    "Supprimer Documents",
+                    "Supprimer Base"
+                ])
+                
+                with subtab1:
+                    kb_creation = KBCreationComponent(kb_manager)
+                    kb_creation.render()
+                
+                with subtab2:
+                    doc_ingestion = DocumentIngestionComponent(kb_manager)
+                    doc_ingestion.render()
+                
+                with subtab3:
+                    delete_docs = DeleteDocsComponent(kb_manager)
+                    delete_docs.render()
+
+                with subtab4:
+                    delete_kb = DeleteKBComponent(kb_manager)
+                    delete_kb.render()
+
         chat_window = ChatWindow(orchestrator)
         await chat_window.render(active_filters)
 
