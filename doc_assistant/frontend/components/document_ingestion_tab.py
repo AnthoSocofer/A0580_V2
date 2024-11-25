@@ -5,6 +5,7 @@ import streamlit as st
 from typing import Dict, Any
 from datetime import datetime
 from backend.kb_management.manager import KnowledgeBaseManager
+import os 
 
 class DocumentIngestionComponent:
     def __init__(self, kb_manager: KnowledgeBaseManager):
@@ -75,6 +76,12 @@ class DocumentIngestionComponent:
                     "file_type": Path(file.name).suffix.lower()[1:]
                 })
                 
+                # Set title in auto_context_config
+                auto_context_config = config.get("auto_context_config", {}) 
+                auto_context_config["use_generated_title"] = False
+                auto_context_config["document_title"] = os.path.splitext(os.path.basename(file.name))[0]
+                config["auto_context_config"] = auto_context_config
+                
                 success = self.kb_manager.add_document(
                     kb_id=kb_id,
                     file_path=tmp_file.name,
@@ -83,9 +90,7 @@ class DocumentIngestionComponent:
                     **config
                 )
                 
-                if success:
-                    return True, ""
-                return False, "Échec de l'ajout du document"
+                return (True, "") if success else (False, "Failed to add document")
                 
             except Exception as e:
                 return False, str(e)

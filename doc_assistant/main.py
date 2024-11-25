@@ -13,6 +13,7 @@ from backend.agents.query_kb_mapper_agent import QueryKBMapper
 from backend.agents.search_agent import SearchAgent
 from backend.utils.config import ConfigManager
 from dsrag.llm import OpenAIChatAPI
+from frontend.components.llm_selector import LLMSelector
 
 async def main():
     # Configuration initiale
@@ -34,15 +35,21 @@ async def main():
     storage_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        # Initialisation des services
+        # Initialisation des gestionnaires
         kb_manager = KnowledgeBaseManager(storage_directory=str(storage_dir))
-        llm_service = OpenAIChatAPI()
-        query_mapper = QueryKBMapper(kb_manager, llm_service)
+        llm_selector = LLMSelector()
+
+        # Sélection du LLM dans la sidebar
+        llm = llm_selector.render()
+        
+        # Initialisation des agents avec le LLM sélectionné
+        query_mapper = QueryKBMapper(kb_manager, llm)
         search_agent = SearchAgent(kb_manager)
-        orchestrator = AgentOrchestrator(kb_manager, query_mapper, search_agent, llm_service)
+        orchestrator = AgentOrchestrator(kb_manager, query_mapper, search_agent, llm)
 
-        st.title("Assistant Documentaire")
-
+        
+         # Définition des onglets de la sidebar
+        st.sidebar.title("🛠️ Options")
         with st.sidebar:
             tab1, tab2 = st.tabs([
                 "Filtrer", 
@@ -76,7 +83,10 @@ async def main():
                 with subtab4:
                     delete_kb = DeleteKBComponent(kb_manager)
                     delete_kb.render()
-
+                    
+        # Interface de chat principale
+        st.title("💬 Assistant Documentaire")
+        
         chat_window = ChatWindow(orchestrator)
         await chat_window.render(active_filters)
 
