@@ -7,12 +7,12 @@ from frontend.components.document_ingestion_tab import DocumentIngestionComponen
 from frontend.components.delete_docs_tab import DeleteDocsComponent
 from frontend.components.delete_kb_tab import DeleteKBComponent
 from frontend.components.chat_window import ChatWindow
-from frontend.components.document_viewer_tab import DocumentViewerComponent
 from backend.kb_management.manager import KnowledgeBaseManager
 from backend.agents.orchestrator import AgentOrchestrator
 from backend.agents.query_kb_mapper_agent import QueryKBMapper
 from backend.agents.search_agent import SearchAgent
 from backend.utils.config import ConfigManager
+from dsrag.llm import OpenAIChatAPI
 from frontend.components.llm_selector import LLMSelector
 
 async def main():
@@ -44,11 +44,10 @@ async def main():
             st.title("🛠️ Configuration")
             
             # Création des onglets principaux
-            tab_llm, tab_filter, tab_docs, tab_kb = st.tabs([
+            tab_llm, tab_filter, tab_kb = st.tabs([
                 "🤖 Modèle LLM",
                 "🔍 Filtres",
-                "📚 Documents",
-                "⚙️ Gestion KB"
+                "📚 Gestion KB"
             ])
             
             # Onglet configuration LLM
@@ -59,11 +58,6 @@ async def main():
             with tab_filter:
                 filter_tab = FilterTab(kb_manager)
                 active_filters = filter_tab.render()
-                
-            # Onglet visualisation des documents
-            with tab_docs:
-                doc_viewer = DocumentViewerComponent(kb_manager)
-                doc_viewer.render()
 
             # Onglet gestion des bases de connaissances
             with tab_kb:
@@ -92,7 +86,25 @@ async def main():
 
         # Interface de chat principale
         st.title("💬 Assistant Documentaire")
-        
+        # Ajouter une barre de progression pour les recherches
+        with st.container():
+            # Zone de messages avec fond personnalisé
+            st.markdown("""
+                <style>
+                .chat-message {
+                    padding: 1rem;
+                    border-radius: 0.5rem;
+                    margin-bottom: 1rem;
+                    background-color: #f0f2f6;
+                }
+                .user-message {
+                    background-color: #e8eaf6;
+                }
+                .assistant-message {
+                    background-color: #f3e5f5;
+                }
+                </style>
+            """, unsafe_allow_html=True)
         # Initialisation des agents avec le LLM sélectionné
         query_mapper = QueryKBMapper(kb_manager, llm)
         search_agent = SearchAgent(kb_manager)
