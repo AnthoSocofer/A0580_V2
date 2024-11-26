@@ -1,0 +1,122 @@
+/* Styles pour le sélecteur de LLM */
+
+/* En-tête */
+h1.title {
+    color: #FFFFFF;
+    margin-bottom: 2rem;
+   }
+   
+   /* Onglets */
+   .tab-container {
+    background: #1E1E1E;
+    border-radius: 8px;
+    padding: 1rem;
+    margin-bottom: 2rem;
+   }
+   
+   .tab {
+    background: transparent;
+    border: none;
+    color: #FFFFFF; 
+    padding: 0.5rem 1rem;
+    margin-right: 0.5rem;
+    border-radius: 4px;
+   }
+   
+   .tab.active {
+    background: #2F2F2F;
+   }
+   
+   /* Conteneurs */
+   .provider-section,
+   .model-section {
+    background: #2B2B2B;
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+   }
+   
+   /* Sélection provider */
+   .provider-select {
+    width: 100%;
+    padding: 0.75rem;
+    border-radius: 6px;
+    background: #1A1A1A;
+    border: 1px solid #404040;
+    color: #FFFFFF;
+   }
+   
+   /* Radio modèles */ 
+   .model-radio {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+   }
+   
+   .model-option {
+    background: #1A1A1A;
+    border: 1px solid #404040;
+    border-radius: 6px;
+    padding: 1rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+   }
+   
+   .model-option:hover {
+    background: #2F2F2F;
+   }
+   
+   .model-option.selected {
+    border-color: #00A67E;
+    background: #1A2F2A;
+   }
+   
+   .model-name {
+    font-weight: 500;
+    margin-bottom: 0.25rem;
+   }
+   
+   .model-description {
+    font-size: 0.875rem;
+    color: #A0A0A0;
+   }
+   
+   /* Configuration avancée */
+   .advanced-config {
+    background: #2B2B2B;
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin-top: 1.5rem;
+   }
+   
+   /* Configuration actuelle */
+   .current-config {
+    background: #1A2F2A;
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin-top: 2rem;
+    border: 1px solid #00A67E;
+   }
+   
+   .config-item {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 0.5rem;
+    color: #FFFFFF;
+   }
+   
+   /* État désactivé */
+   .disabled {
+    opacity: 0.5;
+    pointer-events: none;
+   }
+   
+   /* Animations */
+   .fade-in {
+    animation: fadeIn 0.3s ease;
+   }
+   
+   @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+   }

@@ -1,4 +1,3 @@
-# doc_assistant/frontend/components/llm_selector.py
 import streamlit as st
 from pathlib import Path
 from dsrag.llm import OpenAIChatAPI, AnthropicChatAPI, LLM
@@ -7,7 +6,6 @@ class LLMSelector:
     LLM_CONFIGS = {
         "OpenAI": {
             "class": OpenAIChatAPI,
-            "color": "#74AA9C",
             "models": [
                 {
                     "id": "gpt-4-0125-preview",
@@ -32,11 +30,11 @@ class LLMSelector:
             ],
             "default_model": "gpt-4-turbo-preview",
             "default_temp": 0.2,
-            "default_max_tokens": 1000
+            "default_max_tokens": 1000,
+            "color": "#74AA9C"
         },
         "Anthropic": {
             "class": AnthropicChatAPI,
-            "color": "#000000",
             "models": [
                 {
                     "id": "claude-3-opus-20240229",
@@ -56,11 +54,13 @@ class LLMSelector:
             ],
             "default_model": "claude-3-sonnet-20240229",
             "default_temp": 0.2,
-            "default_max_tokens": 1000
+            "default_max_tokens": 1000,
+            "color": "#000000"
         }
     }
 
     def __init__(self):
+        # Initialisation des états de session
         if 'llm_provider' not in st.session_state:
             st.session_state.llm_provider = "OpenAI"
         if 'llm_model' not in st.session_state:
@@ -69,78 +69,79 @@ class LLMSelector:
             st.session_state.llm_temperature = self.LLM_CONFIGS["OpenAI"]["default_temp"]
         if 'llm_max_tokens' not in st.session_state:
             st.session_state.llm_max_tokens = self.LLM_CONFIGS["OpenAI"]["default_max_tokens"]
+
+    def _render_provider_selection(self):
+        """Affiche les boutons de sélection du provider"""
+        st.write("#### Sélection du provider")
+        cols = st.columns(len(self.LLM_CONFIGS))
         
-        # Charger le CSS
-        css_path = Path(__file__).parent.parent / "styles" / "llm_selector.css"
-        with open(css_path) as f:
-            st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+        for idx, (provider, config) in enumerate(self.LLM_CONFIGS.items()):
+            with cols[idx]:
+                selected = st.session_state.llm_provider == provider
+                if st.button(
+                    provider,
+                    key=f"provider_{provider}",
+                    type="primary" if selected else "secondary",
+                    use_container_width=True
+                ):
+                    st.session_state.llm_provider = provider
+                    st.session_state.llm_model = config["default_model"]
+                    st.rerun()
+
+    def _render_model_selection(self):
+        """Affiche les cartes de sélection des modèles"""
+        current_config = self.LLM_CONFIGS[st.session_state.llm_provider]
+        st.write("#### Sélection du modèle")
+        
+        for model in current_config["models"]:
+            col1, col2 = st.columns([5, 1])
+            with col1:
+                st.write(f"**{model['name']}**")
+                st.write(model['description'])
+            with col2:
+                selected = st.session_state.llm_model == model["id"]
+                if st.button(
+                    "Sélectionner" if not selected else "✓",
+                    key=f"model_{model['id']}",
+                    type="primary" if selected else "secondary",
+                ):
+                    st.session_state.llm_model = model["id"]
+                    st.rerun()
+            st.write("---")
 
     def render(self) -> LLM:
-        # Remplacer les boutons individuels par un selectbox pour le provider
-        provider = st.selectbox(
-            "Provider",
-            options=list(self.LLM_CONFIGS.keys()),
-            index=list(self.LLM_CONFIGS.keys()).index(st.session_state.llm_provider)
-        )
+        st.markdown("### 🤖 Configuration du modèle")
         
-        if provider != st.session_state.llm_provider:
-            st.session_state.llm_provider = provider
-            st.session_state.llm_model = self.LLM_CONFIGS[provider]["default_model"]
+        # Sélection du provider
+        self._render_provider_selection()
+        st.write("---")
         
-        # Utiliser un radio pour les modèles au lieu de boutons
-        current_config = self.LLM_CONFIGS[st.session_state.llm_provider]
-        model_options = {m["id"]: f"{m['name']} - {m['description']}" 
-                        for m in current_config["models"]}
-        
-        selected_model = st.radio(
-            "Modèle",
-            options=list(model_options.keys()),
-            format_func=lambda x: model_options[x],
-            index=list(model_options.keys()).index(st.session_state.llm_model)
-        )
-        
-        if selected_model != st.session_state.llm_model:
-            st.session_state.llm_model = selected_model
+        # Sélection du modèle
+        self._render_model_selection()
+
         # Configuration avancée
         with st.expander("⚙️ Configuration avancée"):
             col1, col2 = st.columns(2)
             with col1:
                 st.session_state.llm_temperature = st.slider(
-                    "🌡️ Température",
-                    0.0, 1.0,
+                    "Température",
+                    0.0, 1.0, 
                     st.session_state.llm_temperature,
-                    0.1
+                    0.1,
+                    help="Contrôle la créativité des réponses"
                 )
             with col2:
                 st.session_state.llm_max_tokens = st.number_input(
-                    "📝 Tokens Maximum",
+                    "Tokens Maximum",
                     100, 4000,
                     st.session_state.llm_max_tokens,
                     100
                 )
 
-        # Affichage de la configuration active
-        selected_model_name = next(
-            (m['name'] for m in current_config['models'] if m['id'] == st.session_state.llm_model),
-            st.session_state.llm_model
-        )
-
-        st.markdown("<div class='config-summary'>", unsafe_allow_html=True)
-        st.markdown("### 📊 Configuration actuelle")
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown(f"""
-                - **Provider**: {st.session_state.llm_provider}
-                - **Modèle**: {selected_model_name}
-            """)
-        with col2:
-            st.markdown(f"""
-                - **Température**: {st.session_state.llm_temperature}
-                - **Tokens max**: {st.session_state.llm_max_tokens}
-            """)
-        st.markdown("</div>", unsafe_allow_html=True)
-
-        return current_config["class"](
+        # Création de l'instance LLM
+        current_config = self.LLM_CONFIGS[st.session_state.llm_provider]
+        llm_class = current_config["class"]
+        return llm_class(
             model=st.session_state.llm_model,
             temperature=st.session_state.llm_temperature,
             max_tokens=st.session_state.llm_max_tokens

@@ -26,6 +26,7 @@ class QueryKBMapper:
         ])
         
         return f"""En tant qu'expert en analyse de requêtes, évalue la pertinence de la question suivante pour chacune des bases de connaissances disponibles.
+        Elimine les bases de connaissance dont la description ne correspond pas aux éléments de la question.
         Retourne une liste au format JSON avec la structure suivante pour chaque base pertinente (score > 0.6):
         {{"mappings": [
             {{"kb_id": "id_de_la_base",

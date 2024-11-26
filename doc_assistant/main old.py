@@ -12,7 +12,6 @@ from backend.agents.orchestrator import AgentOrchestrator
 from backend.agents.query_kb_mapper_agent import QueryKBMapper
 from backend.agents.search_agent import SearchAgent
 from backend.utils.config import ConfigManager
-from dsrag.llm import OpenAIChatAPI
 from frontend.components.llm_selector import LLMSelector
 
 async def main():
@@ -39,76 +38,53 @@ async def main():
         kb_manager = KnowledgeBaseManager(storage_directory=str(storage_dir))
         llm_selector = LLMSelector()
 
-        # Organisation de la sidebar avec tabs
-        with st.sidebar:
-            st.title("🛠️ Configuration")
-            
-            # Création des onglets principaux
-            tab_llm, tab_filter, tab_kb = st.tabs([
-                "🤖 Modèle LLM",
-                "🔍 Filtres",
-                "📚 Gestion KB"
-            ])
-            
-            # Onglet configuration LLM
-            with tab_llm:
-                llm = llm_selector.render()
-
-            # Onglet filtres de recherche
-            with tab_filter:
-                filter_tab = FilterTab(kb_manager)
-                active_filters = filter_tab.render()
-
-            # Onglet gestion des bases de connaissances
-            with tab_kb:
-                kb_tabs = st.tabs([
-                    "Créer Base",
-                    "Ajouter Docs",
-                    "Supprimer Docs",
-                    "Supprimer Base"
-                ])
-                
-                with kb_tabs[0]:
-                    kb_creation = KBCreationComponent(kb_manager)
-                    kb_creation.render()
-                
-                with kb_tabs[1]:
-                    doc_ingestion = DocumentIngestionComponent(kb_manager)
-                    doc_ingestion.render()
-                
-                with kb_tabs[2]:
-                    delete_docs = DeleteDocsComponent(kb_manager)
-                    delete_docs.render()
-
-                with kb_tabs[3]:
-                    delete_kb = DeleteKBComponent(kb_manager)
-                    delete_kb.render()
-
-        # Interface de chat principale
-        st.title("💬 Assistant Documentaire")
-        # Ajouter une barre de progression pour les recherches
-        with st.container():
-            # Zone de messages avec fond personnalisé
-            st.markdown("""
-                <style>
-                .chat-message {
-                    padding: 1rem;
-                    border-radius: 0.5rem;
-                    margin-bottom: 1rem;
-                    background-color: #f0f2f6;
-                }
-                .user-message {
-                    background-color: #e8eaf6;
-                }
-                .assistant-message {
-                    background-color: #f3e5f5;
-                }
-                </style>
-            """, unsafe_allow_html=True)
+        # Sélection du LLM dans la sidebar
+        llm = llm_selector.render()
+        
         # Initialisation des agents avec le LLM sélectionné
         query_mapper = QueryKBMapper(kb_manager, llm)
         search_agent = SearchAgent(kb_manager)
         orchestrator = AgentOrchestrator(kb_manager, query_mapper, search_agent, llm)
+
+        
+         # Définition des onglets de la sidebar
+        st.sidebar.title("🛠️ Options")
+        with st.sidebar:
+            tab1, tab2 = st.tabs([
+                "Filtrer", 
+                "Gestion des bases de connaissances"
+            ])
+            
+            with tab1:
+                filter_tab = FilterTab(kb_manager)
+                active_filters = filter_tab.render()
+
+            with tab2:
+                subtab1, subtab2, subtab3, subtab4 = st.tabs([
+                    "Créer Base",
+                    "Ajouter Documents",
+                    "Supprimer Documents",
+                    "Supprimer Base"
+                ])
+                
+                with subtab1:
+                    kb_creation = KBCreationComponent(kb_manager)
+                    kb_creation.render()
+                
+                with subtab2:
+                    doc_ingestion = DocumentIngestionComponent(kb_manager)
+                    doc_ingestion.render()
+                
+                with subtab3:
+                    delete_docs = DeleteDocsComponent(kb_manager)
+                    delete_docs.render()
+
+                with subtab4:
+                    delete_kb = DeleteKBComponent(kb_manager)
+                    delete_kb.render()
+                    
+        # Interface de chat principale
+        st.title("💬 Assistant Documentaire")
         
         chat_window = ChatWindow(orchestrator)
         await chat_window.render(active_filters)
