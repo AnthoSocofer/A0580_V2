@@ -1,3 +1,4 @@
+#doc_assistant/frontend/components/document_ingestion_tab.py
 import streamlit as st
 from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional
@@ -9,7 +10,8 @@ import time
 from backend.kb_management.manager import KnowledgeBaseManager
 from dsrag.dsparse.file_parsing.element_types import default_element_types
 import os
-
+from dsrag.embedding import Embedding
+import json
 
 class DocumentIngestionComponent:
     """Composant optimisé pour l'ingestion de documents"""
@@ -116,15 +118,54 @@ class DocumentIngestionComponent:
             'timestamp': time.time()
         }
 
-    async def _process_file(
+    def _get_kb_embedding_config(self, kb_id: str) -> Optional[Dict[str, Any]]:
+        """Récupère la configuration d'embedding d'une base de connaissances"""
+        try:
+            metadata_path = os.path.join(self.kb_manager.metadata_dir, f"{kb_id}.json")
+            if not os.path.exists(metadata_path):
+                raise ValueError(f"Métadonnées introuvables pour la base {kb_id}")
+            with open(metadata_path, 'r') as f:
+                metadata = json.load(f)
+            return metadata.get('embedding_config')
+        except ValueError as ve:
+            print(f"Erreur lors de la récupération de la configuration d'embedding pour la base {kb_id}: {str(ve)}")
+            return None
+        except Exception as e:
+            print(f"Erreur inattendue lors de la récupération de la configuration d'embedding pour la base {kb_id}: {str(e)}")
+            return None
+        
+    def _create_embedding_model(self, config: Dict[str, Any]) -> Embedding:
+        """Crée un modèle d'embedding à partir de la configuration"""
+        provider = config['provider']
+        model = config['model']
+        dimension = config['dimension']
+
+        if provider not in self.kb_manager.SUPPORTED_EMBEDDING_MODELS:
+            raise ValueError(f"Provider d'embedding non supporté: {provider}")
+            
+        if model not in self.kb_manager.SUPPORTED_EMBEDDING_MODELS[provider]["models"]:
+            raise ValueError(f"Modèle d'embedding non supporté pour {provider}: {model}")
+
+        model_class = self.kb_manager.SUPPORTED_EMBEDDING_MODELS[provider]["class"]
+        return model_class(model=model, dimension=dimension)
+
+    def _process_file(
         self, 
         file,
         kb_id: str,
         config: Dict[str, Any],
         progress_key: str
-    ) -> Tuple[bool, str]:
-        """Traitement asynchrone optimisé des fichiers"""
+    ):
         try:
+            # Récupérer la configuration d'embedding de la base
+            embedding_config = self._get_kb_embedding_config(kb_id)
+            if not embedding_config:
+                self._update_progress(progress_key, 'error', "Configuration d'embedding non trouvée")
+                return False, "Configuration d'embedding non trouvée"
+
+            # Créer le modèle d'embedding avec la configuration correcte  
+            embedding_model = self.kb_manager._create_embedding_model(embedding_config)
+            
             self._update_progress(progress_key, 'processing', 'Validation du fichier...', 0.1)
             
             # Validation rapide
@@ -137,40 +178,29 @@ class DocumentIngestionComponent:
                 self._update_progress(progress_key, 'error', error)
                 return False, error
 
-            # Création du fichier temporaire avec contexte
             with tempfile.NamedTemporaryFile(delete=False, suffix=Path(file.name).suffix) as tmp_file:
                 self._update_progress(progress_key, 'processing', 'Préparation du fichier...', 0.2)
                 tmp_file.write(file.getvalue())
                 tmp_file.flush()
                 
                 try:
-
-                    # Enrichissement des métadonnées
                     metadata = config.pop('metadata', {})
                     metadata.update({
                         'original_filename': file.name,
                         'file_size': len(file.getvalue()),
                         'file_type': Path(file.name).suffix.lower()[1:],
-                        'upload_timestamp': datetime.now().isoformat(),
-                        'processing_config': {
-                            'use_vlm': config.get('file_parsing_config', {}).get('use_vlm', False),
-                            'chunk_size': config.get('chunk_size'),
-                            'semantic_sectioning': config.get('semantic_sectioning_config', {}).get('use_semantic_sectioning')
-                        }
+                        'upload_timestamp': datetime.now().isoformat()
                     })
 
                     self._update_progress(progress_key, 'processing', 'Ingestion en cours...', 0.4)
                     
-                    # Traitement asynchrone via executor
-                    success = await asyncio.get_event_loop().run_in_executor(
-                        None,
-                        lambda: self.kb_manager.add_document(
-                            kb_id=kb_id,
-                            file_path=tmp_file.name,
-                            doc_id=file.name,
-                            metadata=metadata,
-                            **config
-                        )
+                    success = self.kb_manager.add_document(
+                        kb_id=kb_id,
+                        file_path=tmp_file.name,
+                        doc_id=file.name,
+                        metadata=metadata,
+                        embedding_model=embedding_model,  # Utiliser le modèle d'embedding de la base
+                        **config
                     )
                     
                     if success:
@@ -181,17 +211,44 @@ class DocumentIngestionComponent:
                         return False, "Échec de l'ingestion"
                         
                 finally:
-                    # Nettoyage asynchrone du fichier temporaire
-                    await asyncio.get_event_loop().run_in_executor(
-                        None,
-                        lambda: Path(tmp_file.name).unlink(missing_ok=True)
-                    )
+                    Path(tmp_file.name).unlink(missing_ok=True)
                     
         except Exception as e:
             error_msg = f"Erreur inattendue: {str(e)}"
             self._update_progress(progress_key, 'error', error_msg)
             return False, error_msg
 
+
+    
+    def _get_kb_embedding_config(self, kb_id: str) -> Optional[Dict[str, Any]]:
+        """Récupère la configuration d'embedding d'une base de connaissances"""
+        try:
+            metadata_path = os.path.join(self.kb_manager.metadata_dir, f"{kb_id}.json")
+            if not os.path.exists(metadata_path):
+                raise ValueError(f"Métadonnées introuvables pour la base {kb_id}")
+            with open(metadata_path, 'r') as f:
+                metadata = json.load(f)
+            return metadata.get('embedding_config')
+        except Exception as e:
+            print(f"Erreur lors de la récupération de la configuration d'embedding pour la base {kb_id}: {str(e)}")
+            return None
+
+
+    def _create_embedding_model(self, config: Dict[str, Any]) -> Embedding:
+        """Crée un modèle d'embedding à partir de la configuration"""
+        provider = config['provider'] 
+        model = config['model']
+        dimension = config['dimension']
+
+        if provider not in self.kb_manager.SUPPORTED_EMBEDDING_MODELS:
+            raise ValueError(f"Provider d'embedding non supporté: {provider}")
+            
+        if model not in self.kb_manager.SUPPORTED_EMBEDDING_MODELS[provider]["models"]:
+            raise ValueError(f"Modèle d'embedding non supporté pour {provider}: {model}")
+
+        model_class = self.kb_manager.SUPPORTED_EMBEDDING_MODELS[provider]["class"]
+        return model_class(model=model, dimension=dimension)
+        
     def _render_progress(self):
         """Affiche la progression avec une interface améliorée"""
         if not st.session_state.upload_progress:
@@ -573,6 +630,25 @@ class DocumentIngestionComponent:
                 
         return success_count, total_files
 
+    def _check_embedding_config(self, kb_id: str) -> bool:
+        """Vérifie que la base a une configuration d'embedding valide"""
+        try:
+            embedding_config = self._get_kb_embedding_config(kb_id)
+            if not embedding_config:
+                st.error("⚠️ Configuration d'embedding non trouvée pour cette base")
+                return False
+                
+            st.info(
+                f"📊 Configuration d'embedding:\n"
+                f"- Provider: {embedding_config['provider']}\n"
+                f"- Modèle: {embedding_config['model']}\n"
+                f"- Dimension: {embedding_config['dimension']}"
+            )
+            return True
+        except Exception as e:
+            st.error(f"❌ Erreur lors de la vérification de la configuration d'embedding: {str(e)}")
+            return False
+
     def render(self):
         """Interface principale pour l'ingestion de documents"""
         st.header("📥 Ingestion de Documents")
@@ -587,16 +663,17 @@ class DocumentIngestionComponent:
             st.warning("🚫 Aucune base de connaissances disponible.")
             return
 
-        kb_options = {
-            kb["id"]: f"{kb['title']} ({kb['id']})"
-            for kb in kb_list
-        }
-        
         selected_kb = st.selectbox(
             "📚 Base de connaissances",
-            options=list(kb_options.keys()),
-            format_func=lambda x: kb_options[x]
+            options=[kb["id"] for kb in kb_list],
+            format_func=lambda x: f"{x} - {next((kb['title'] for kb in kb_list if kb['id'] == x), '')}"
         )
+
+        if selected_kb:
+            # Vérifier la configuration d'embedding avant de permettre l'ingestion
+            if not self._check_embedding_config(selected_kb):
+                st.error("⚠️ L'ingestion de documents n'est pas possible sans configuration d'embedding valide.")
+                return
 
         # Types de fichiers acceptés
         accepted_types = ["pdf"] if use_vlm else ["pdf", "docx", "txt", "md"]
@@ -725,7 +802,7 @@ class DocumentIngestionComponent:
                                 try:
                                     # Créer un identifiant relatif pour le document
                                     rel_path = file_path.relative_to(selected_path)
-                                    doc_id = os.path.basename(str(rel_path))
+                                    doc_id = str(rel_path)
                                     
                                     # Préparer la configuration selon la structure attendue
                                     parsing_config = {}
@@ -745,16 +822,12 @@ class DocumentIngestionComponent:
                                                 "project_id": config.get("project_id"),
                                                 "location": config.get("location")
                                             })
-                                    # Lire la taille du fichier
-                                    file_size = file_path.stat().st_size
+
                                     # Préparation des métadonnées
                                     metadata = {
                                         'original_path': str(rel_path),
                                         'folder_structure': True,
-                                        'source_directory': str(selected_path.name),
-                                        'file_size': file_size,  # Ajout de la taille
-                                        'file_type': file_path.suffix.lower()[1:],  # Ajout de l'extension
-                                        'upload_timestamp': datetime.now().isoformat()
+                                        'source_directory': str(selected_path.name)
                                     }
                                     metadata.update(config.get('metadata', {}))
 

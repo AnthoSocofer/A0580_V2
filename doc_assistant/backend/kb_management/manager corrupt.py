@@ -1,3 +1,4 @@
+#doc_assistant/backend/kb_managment/manager.py
 """
 Knowledge base manager main class
 
@@ -24,7 +25,6 @@ from dsrag.reranker import (
     NoReranker
 )
 from dsrag.llm import OpenAIChatAPI, AnthropicChatAPI
-from backend.utils.string_nomalizer import StringNormalizer
 
 class KnowledgeBaseManager:
     """Gestionnaire de bases de connaissances utilisant ChromaDB comme stockage vectoriel"""
@@ -80,26 +80,24 @@ class KnowledgeBaseManager:
         os.makedirs(self.metadata_dir, exist_ok=True)
         self.chroma_client = chromadb.PersistentClient(path=self.vector_storage_path)
 
-    def _create_embedding_model(
-        self,
-        provider: str,
-        model_name: str,
-        dimension: Optional[int] = None
-    ) -> Embedding:
+    def _create_embedding_model(self, embedding_config: Dict[str, Any]) -> Embedding:
         """
         Crée une instance du modèle d'embedding selon la configuration
         """
+        provider = embedding_config.get('provider')
+        model_name = embedding_config.get('model')
+        dimension = embedding_config.get('dimension')
+
+        if not provider or not model_name or not dimension:
+            raise ValueError("Configuration d'embedding incomplète: 'provider', 'model' et 'dimension' sont requis")
+
         if provider not in self.SUPPORTED_EMBEDDING_MODELS:
             raise ValueError(f"Provider d'embedding non supporté: {provider}")
-            
+        
         if model_name not in self.SUPPORTED_EMBEDDING_MODELS[provider]["models"]:
             raise ValueError(f"Modèle d'embedding non supporté pour {provider}: {model_name}")
 
         model_class = self.SUPPORTED_EMBEDDING_MODELS[provider]["class"]
-        
-        if dimension is None:
-            dimension = 1536#self.SUPPORTED_EMBEDDING_MODELS[provider]["default_dimensions"][model_name]
-
         return model_class(model=model_name, dimension=dimension)
 
     def _create_reranker(
@@ -125,43 +123,25 @@ class KnowledgeBaseManager:
         title: str = "",
         description: str = "",
         language: str = "en",
-        embedding_provider: str = "openai",
-        embedding_model: str = "text-embedding-3-small",
-        embedding_dimension: Optional[int] = 1536,
+        embedding_config: Optional[dict] = None,  # Utiliser `embedding_config` pour la configuration
         reranker_provider: str = "cohere",
         reranker_model: str = "rerank-multilingual-v3.0",
-        llm_provider: Literal["openai", "anthropic"] = "openai",
+        llm_provider: Literal["openai", "anthropic"] = "anthropic",
     ) -> KnowledgeBase:
         """
         Crée une nouvelle base de connaissances avec configuration personnalisée
-        
-        Args:
-            kb_id: Identifiant unique de la base
-            title: Titre de la base
-            description: Description de la base
-            language: Langue des documents ("en", "fr", etc.)
-            embedding_provider: Fournisseur du modèle d'embedding
-            embedding_model: Nom du modèle d'embedding
-            embedding_dimension: Dimension des vecteurs (optionnel)
-            reranker_provider: Fournisseur du modèle de reranking
-            reranker_model: Nom du modèle de reranking
-            llm_provider: Fournisseur du LLM pour l'auto-contexte
         """
-        # Création des composants avec la configuration spécifiée
-        embedding_model = self._create_embedding_model(
-            embedding_provider,
-            embedding_model,
-            embedding_dimension
-        )
+        # Validation de la configuration d'embedding
+        if not embedding_config:
+            raise ValueError("La configuration d'embedding est obligatoire pour créer une base de connaissances")
+
+        embedding_model = self._create_embedding_model(embedding_config)
         
-        reranker = self._create_reranker(
-            reranker_provider,
-            reranker_model
-        )
+        reranker = self._create_reranker(reranker_provider, reranker_model)
         
         vector_db = ChromaDB(kb_id, storage_directory=self.storage_directory)
         chunk_db = SQLiteDB(kb_id, storage_directory=self.storage_directory)
-        
+
         # Sélection du modèle LLM pour l'auto-contexte
         if llm_provider == "openai":
             auto_context_model = OpenAIChatAPI()
@@ -183,6 +163,23 @@ class KnowledgeBaseManager:
             exists_ok=False
         )
         
+        # Les métadonnées sont correctement sauvegardées avec la config d'embedding
+        metadata = {
+            'title': title,
+            'description': description,
+            'language': language,
+            'embedding_config': embedding_config
+        }
+        
+        # Sauvegarde dans un fichier JSON séparé
+        metadata_path = os.path.join(self.metadata_dir, f"{kb_id}.json")
+        try:
+            with open(metadata_path, 'w') as f:
+                json.dump(metadata, f, indent=4)
+            print(f"Métadonnées sauvegardées avec succès pour la base {kb_id}")
+        except Exception as e:
+            print(f"Erreur lors de la sauvegarde des métadonnées pour la base {kb_id}: {str(e)}")
+                
         return kb
 
     def load_knowledge_base(
@@ -193,76 +190,69 @@ class KnowledgeBaseManager:
     ) -> Optional[KnowledgeBase]:
         """
         Charge une base de connaissances existante avec possibilité de modifier le reranker
-        
-        Args:
-            kb_id: Identifiant de la base à charger
-            reranker_provider: Optionnel, nouveau provider de reranking
-            reranker_model: Optionnel, nouveau modèle de reranking
         """
         try:
             metadata_path = os.path.join(self.storage_directory, "metadata", f"{kb_id}.json")
             
             if not os.path.exists(metadata_path):
-                return None
+                raise ValueError(f"Métadonnées introuvables pour la base {kb_id}")
             
-        
-            # Si un nouveau reranker est spécifié, on le crée
+            with open(metadata_path, 'r') as f:
+                metadata = json.load(f)
+                
+            embedding_config = metadata.get('embedding_config')
+            
+            if not embedding_config:
+                raise ValueError(f"Configuration d'embedding manquante pour la base {kb_id}")
+
+            # Créer le modèle d'embedding
+            embedding_model = self._create_embedding_model(embedding_config)
+
             reranker = None
             if reranker_provider and reranker_model:
                 reranker = self._create_reranker(reranker_provider, reranker_model)
-            
+                
+            # Passer le modèle d'embedding lors de la création de KnowledgeBase
             kb = KnowledgeBase(
                 kb_id=kb_id,
                 storage_directory=self.storage_directory,
-                reranker=reranker,  # Le reranker peut être modifié sans affecter les embeddings
+                embedding_model=embedding_model,
+                reranker=reranker,
                 exists_ok=True
             )
             return kb
-        except Exception as e:
-            print(f"Erreur lors du chargement de la base {kb_id}: {str(e)}")
+        
+        except ValueError as ve:
+            print(f"Erreur lors du chargement de la base {kb_id}: {str(ve)}")
             return None
-
+        except Exception as e:
+            print(f"Erreur inattendue lors du chargement de la base {kb_id}: {str(e)}")
+            return None
+        
     def add_document(
         self,
         kb_id: str,
         file_path: str = "",
         text: str = "",
         doc_id: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,  # <= Changé ici
-        auto_context_config: Optional[Dict[str, Any]] = None,
-        semantic_sectioning_config: Optional[Dict[str, Any]] = None,
-        chunk_size: int = 800,
-        min_length_for_chunking: int = 1600,
+        metadata: Optional[Dict[str, Any]] = None,
+        **kwargs
     ) -> bool:
         try:
             kb = self.load_knowledge_base(kb_id)
             if not kb:
                 raise Exception(f"Base de connaissances {kb_id} introuvable")
-            
-            # Initialisation des dictionnaires par défaut    
-            metadata = metadata or {}
-            auto_context_config = auto_context_config or {}
-            semantic_sectioning_config = semantic_sectioning_config or {}
-                
-            if not doc_id:
-                if file_path:
-                    doc_id = os.path.basename(file_path)
-                else:
-                    doc_id = f"doc_{len(kb.chunk_db.get_all_doc_ids())}"
 
-            # Normaliser le doc_id pour éviter les problèmes SQLite
-            normalized_doc_id = StringNormalizer.normalize_doc_id(doc_id)
-        
-            # Ajout du document avec des paramètres valides
+            if not doc_id:
+                doc_id = os.path.basename(file_path) if file_path else f"doc_{len(kb.chunk_db.get_all_doc_ids())}"
+
+            # Pas besoin de passer manuellement le modèle d'embedding, il est déjà chargé dans kb
             kb.add_document(
-                doc_id=normalized_doc_id,
+                doc_id=doc_id,
                 text=text,
                 file_path=file_path,
-                auto_context_config=auto_context_config,
-                semantic_sectioning_config=semantic_sectioning_config,
-                chunk_size=chunk_size,
-                min_length_for_chunking=min_length_for_chunking,
-                metadata=metadata
+                metadata=metadata,
+                **kwargs
             )
             return True
                 

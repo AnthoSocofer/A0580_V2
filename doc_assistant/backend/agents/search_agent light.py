@@ -171,7 +171,7 @@ class SearchAgent:
         """
         Effectue une recherche combinée utilisant kb.search() et la recherche par mots-clés
         """
-        #st.info("🔍 Activation de la recherche combinée (kb.search + mots-clés)")
+        st.info("🔍 Activation de la recherche combinée (kb.search + mots-clés)")
         
         # Extraction des mots-clés
         keywords = self._get_keywords(query)
@@ -179,7 +179,7 @@ class SearchAgent:
             st.warning("Aucun mot-clé significatif trouvé dans la requête")
             return []
 
-        #st.info(f"Mots-clés identifiés: {', '.join(keywords)}")
+        st.info(f"Mots-clés identifiés: {', '.join(keywords)}")
         
         # 1. Recherche avec kb.search()
         kb_results = []
@@ -207,7 +207,7 @@ class SearchAgent:
                     ))
         except Exception as e:
             st.warning(f"Erreur lors de la recherche kb.search(): {str(e)}")
-            #st.info("🔄 Continuation avec la recherche par mots-clés uniquement")
+            st.info("🔄 Continuation avec la recherche par mots-clés uniquement")
         
         # 2. Recherche par mots-clés
         keyword_results = []
@@ -335,9 +335,9 @@ class SearchAgent:
 
         # 2. Si nécessaire, essayer avec des paramètres plus souples
         if not has_valid_results and config.adaptive_recall:
-            #st.info("🔄 Adaptation des paramètres de recherche sémantique...")
+            st.info("🔄 Adaptation des paramètres de recherche sémantique...")
             
-            for mode in [SearchMode.BALANCED, SearchMode.THOROUGH, SearchMode.EXHAUSTIVE]:
+            for mode in [SearchMode.BALANCED, SearchMode.THOROUGH]:
                 if mode.value <= config.mode.value:
                     continue
                     
@@ -358,12 +358,11 @@ class SearchAgent:
 
         # 3. Si toujours aucun résultat valide, activer le fallback
         if not has_valid_results and config.enable_fallback:
-            #st.warning("⚠️ Aucun résultat pertinent trouvé - Activation de la recherche alternative")
-            fallback_results = await self._combined_fallback_search(
+            st.warning("⚠️ Aucun résultat pertinent trouvé - Activation de la recherche alternative")
+            fallback_results = kb.search(
                 query=query,
-                kb=kb,
+                top_k=5,
                 metadata_filter=metadata_filter,
-                config=config
             )
             if fallback_results:
                 st.success(f"✅ {len(fallback_results)} résultats trouvés via recherche alternative")
@@ -424,7 +423,7 @@ class SearchAgent:
         search_contexts = []
         total_kbs = len(kb_mappings)
         
-        #st.info(f"🔍 Recherche dans {total_kbs} bases de connaissances")
+        st.info(f"🔍 Recherche dans {total_kbs} bases de connaissances")
         
         for idx, mapping in enumerate(kb_mappings, 1):
             # Charger les informations de la base
@@ -462,7 +461,7 @@ class SearchAgent:
             )
 
             if results:
-                #st.success(f"✅ {len(results)} résultats trouvés dans {kb_title}")
+                st.success(f"✅ {len(results)} résultats trouvés dans {kb_title}")
                 search_contexts.append(SearchContext(
                     kb_id=mapping.kb_id,
                     results=results,

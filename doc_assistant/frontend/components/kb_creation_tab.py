@@ -1,9 +1,11 @@
-#frontend/components/kb_creation_tab.py
+#doc_assistant/frontend/components/kb_creation_tab.py
 
 import streamlit as st
 from pathlib import Path
 from typing import Tuple, Optional
 from backend.kb_management.manager import KnowledgeBaseManager
+import os 
+import json
 
 class KBCreationComponent:
     """Composant pour la création de nouvelles bases de connaissances"""
@@ -149,25 +151,28 @@ class KBCreationComponent:
                     key="llm_provider_select"
                 )
             
-            # Bouton de soumission
-            submitted = st.form_submit_button(
-                "Créer la base",
-                type="primary",
-                use_container_width=True
-            )
-            
+            submitted = st.form_submit_button("Créer la base", type="primary")
+                    
             if submitted:
-                # Valider les entrées
                 if not self._validate_inputs(kb_id, title):
                     return
                     
                 try:
                     with st.spinner("Création de la base en cours..."):
+                        # Configuration d'embedding 
+                        embedding_config = {
+                            'provider': emb_provider,
+                            'model': emb_model,
+                            'dimension': dimension
+                        }
+
+                        # Créer la base avec la configuration d'embedding
                         kb = self.kb_manager.create_knowledge_base(
                             kb_id=kb_id,
                             title=title,
                             description=description,
                             language=language,
+                            #embedding_config=embedding_config,  # Passer la config complète
                             embedding_provider=emb_provider,
                             embedding_model=emb_model,
                             embedding_dimension=dimension,
@@ -175,23 +180,10 @@ class KBCreationComponent:
                             reranker_model=rerank_model,
                             llm_provider=llm_provider
                         )
-                        
+
                         st.success(f"✅ Base de connaissances '{title}' créée avec succès!")
-                        
-                        # Afficher un résumé de la configuration
-                        st.write("### Configuration")
-                        st.json({
-                            "id": kb_id,
-                            "title": title,
-                            "language": language,
-                            "embedding": f"{emb_provider}/{emb_model}",
-                            "dimension": dimension,
-                            "reranker": f"{rerank_provider}/{rerank_model}",
-                            "llm": llm_provider
-                        })
-                        
                         return True
-                        
+                                    
                 except Exception as e:
                     st.error(f"❌ Erreur lors de la création de la base : {str(e)}")
                     return False

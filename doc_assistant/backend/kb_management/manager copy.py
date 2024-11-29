@@ -1,3 +1,4 @@
+#doc_assistant/backend/kb_managment/manager.py
 """
 Knowledge base manager main class
 
@@ -24,7 +25,6 @@ from dsrag.reranker import (
     NoReranker
 )
 from dsrag.llm import OpenAIChatAPI, AnthropicChatAPI
-from backend.utils.string_nomalizer import StringNormalizer
 
 class KnowledgeBaseManager:
     """Gestionnaire de bases de connaissances utilisant ChromaDB comme stockage vectoriel"""
@@ -98,7 +98,7 @@ class KnowledgeBaseManager:
         model_class = self.SUPPORTED_EMBEDDING_MODELS[provider]["class"]
         
         if dimension is None:
-            dimension = 1536#self.SUPPORTED_EMBEDDING_MODELS[provider]["default_dimensions"][model_name]
+            dimension = self.SUPPORTED_EMBEDDING_MODELS[provider]["default_dimensions"][model_name]
 
         return model_class(model=model_name, dimension=dimension)
 
@@ -125,12 +125,13 @@ class KnowledgeBaseManager:
         title: str = "",
         description: str = "",
         language: str = "en",
+        embedding_config: Optional[dict] = None,  # Nouveau paramètre
         embedding_provider: str = "openai",
         embedding_model: str = "text-embedding-3-small",
-        embedding_dimension: Optional[int] = 1536,
+        embedding_dimension: Optional[int] = None,
         reranker_provider: str = "cohere",
         reranker_model: str = "rerank-multilingual-v3.0",
-        llm_provider: Literal["openai", "anthropic"] = "openai",
+        llm_provider: Literal["openai", "anthropic"] = "anthropic",
     ) -> KnowledgeBase:
         """
         Crée une nouvelle base de connaissances avec configuration personnalisée
@@ -140,6 +141,7 @@ class KnowledgeBaseManager:
             title: Titre de la base
             description: Description de la base
             language: Langue des documents ("en", "fr", etc.)
+            embedding_config: Modèle d'embedding utilisé
             embedding_provider: Fournisseur du modèle d'embedding
             embedding_model: Nom du modèle d'embedding
             embedding_dimension: Dimension des vecteurs (optionnel)
@@ -161,7 +163,7 @@ class KnowledgeBaseManager:
         
         vector_db = ChromaDB(kb_id, storage_directory=self.storage_directory)
         chunk_db = SQLiteDB(kb_id, storage_directory=self.storage_directory)
-        
+
         # Sélection du modèle LLM pour l'auto-contexte
         if llm_provider == "openai":
             auto_context_model = OpenAIChatAPI()
@@ -183,6 +185,23 @@ class KnowledgeBaseManager:
             exists_ok=False
         )
         
+        # Les métadonnées sont correctement sauvegardées avec la config d'embedding
+        metadata = {
+            'title': title,
+            'description': description,
+            'language': language,
+            'embedding_config': embedding_config or {
+                'provider': embedding_provider,
+                'model': embedding_model,
+                'dimension': embedding_dimension 
+            }
+        }
+        
+        # Sauvegarde dans un fichier JSON séparé
+        metadata_path = os.path.join(self.metadata_dir, f"{kb_id}.json")
+        with open(metadata_path, 'w') as f:
+            json.dump(metadata, f, indent=4)
+                
         return kb
 
     def load_knowledge_base(
@@ -205,19 +224,35 @@ class KnowledgeBaseManager:
             if not os.path.exists(metadata_path):
                 return None
             
-        
+            with open(metadata_path, 'r') as f:
+                metadata = json.load(f)
+                
+            embedding_config = metadata.get('embedding_config')
+            
+            if not embedding_config:
+                raise ValueError(f"Configuration d'embedding manquante pour la base {kb_id}")
+
+            # Créer le modèle d'embedding
+            embedding_model = self._create_embedding_model(
+                provider=embedding_config['provider'],
+                model_name=embedding_config['model'],
+                dimension=embedding_config['dimension']
+            )
             # Si un nouveau reranker est spécifié, on le crée
             reranker = None
             if reranker_provider and reranker_model:
                 reranker = self._create_reranker(reranker_provider, reranker_model)
             
+            # Créer la base avec le bon modèle d'embedding
             kb = KnowledgeBase(
                 kb_id=kb_id,
                 storage_directory=self.storage_directory,
-                reranker=reranker,  # Le reranker peut être modifié sans affecter les embeddings
+                embedding_model=embedding_model,  # Utiliser le modèle correct
+                reranker=reranker,
                 exists_ok=True
             )
             return kb
+        
         except Exception as e:
             print(f"Erreur lors du chargement de la base {kb_id}: {str(e)}")
             return None
@@ -229,6 +264,7 @@ class KnowledgeBaseManager:
         text: str = "",
         doc_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,  # <= Changé ici
+        embedding_model: Optional[Embedding] = None,  # Ajout du paramètre
         auto_context_config: Optional[Dict[str, Any]] = None,
         semantic_sectioning_config: Optional[Dict[str, Any]] = None,
         chunk_size: int = 800,
@@ -239,6 +275,10 @@ class KnowledgeBaseManager:
             if not kb:
                 raise Exception(f"Base de connaissances {kb_id} introuvable")
             
+            # Si un modèle d'embedding est fourni, l'utiliser
+            if embedding_model:
+                kb.embedding_model = embedding_model
+                
             # Initialisation des dictionnaires par défaut    
             metadata = metadata or {}
             auto_context_config = auto_context_config or {}
@@ -250,12 +290,9 @@ class KnowledgeBaseManager:
                 else:
                     doc_id = f"doc_{len(kb.chunk_db.get_all_doc_ids())}"
 
-            # Normaliser le doc_id pour éviter les problèmes SQLite
-            normalized_doc_id = StringNormalizer.normalize_doc_id(doc_id)
-        
             # Ajout du document avec des paramètres valides
             kb.add_document(
-                doc_id=normalized_doc_id,
+                doc_id=doc_id,
                 text=text,
                 file_path=file_path,
                 auto_context_config=auto_context_config,

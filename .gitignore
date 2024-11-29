@@ -118,6 +118,7 @@ doc_assistant/data
 notebooks
 doc_assistant/tests
 test
+backup
 # Spyder project settings
 .spyderproject
 .spyproject

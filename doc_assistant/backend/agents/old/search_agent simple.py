@@ -171,7 +171,7 @@ class SearchAgent:
         """
         Effectue une recherche combinée utilisant kb.search() et la recherche par mots-clés
         """
-        #st.info("🔍 Activation de la recherche combinée (kb.search + mots-clés)")
+        st.info("🔍 Activation de la recherche combinée (kb.search + mots-clés)")
         
         # Extraction des mots-clés
         keywords = self._get_keywords(query)
@@ -179,7 +179,7 @@ class SearchAgent:
             st.warning("Aucun mot-clé significatif trouvé dans la requête")
             return []
 
-        #st.info(f"Mots-clés identifiés: {', '.join(keywords)}")
+        st.info(f"Mots-clés identifiés: {', '.join(keywords)}")
         
         # 1. Recherche avec kb.search()
         kb_results = []
@@ -207,7 +207,7 @@ class SearchAgent:
                     ))
         except Exception as e:
             st.warning(f"Erreur lors de la recherche kb.search(): {str(e)}")
-            #st.info("🔄 Continuation avec la recherche par mots-clés uniquement")
+            st.info("🔄 Continuation avec la recherche par mots-clés uniquement")
         
         # 2. Recherche par mots-clés
         keyword_results = []
@@ -302,115 +302,58 @@ class SearchAgent:
         
         return True
 
-    async def search(
-        self,
-        query: str,
-        kb: KnowledgeBase,
-        filters: Optional[Dict[str, Any]] = None,
-        config: Optional[SearchConfig] = None
-    ) -> List[DocumentReference]:
+    async def search(self, query: str, kb: KnowledgeBase, filters: Optional[Dict] = None) -> List[DocumentReference]:
         """
-        Effectue une recherche avec stratégie de fallback améliorée
+        Effectue une recherche dans une base de connaissances
         """
-        if config is None:
-            config = SearchConfig()
+        try:
+            # Si la base n'est pas accessible, retourner une liste vide plutôt que None
+            if not kb:
+                print(f"Base de connaissances non accessible")
+                return []
 
-        metadata_filter = None
-        if filters:
-            metadata_filter = MetadataFilter(
-                field=filters.get("field", ""),
-                operator=filters.get("operator", "equals"),
-                value=filters.get("value", "")
-            )
-
-        # 1. Tentative initiale avec recherche sémantique
-        rse_params = self._get_rse_params(config.mode)
-        results = kb.query(
-            search_queries=[query],
-            metadata_filter=metadata_filter,
-            rse_params=rse_params
-        )
-
-        has_valid_results = bool(results and any(r.get('score', 0) >= config.min_relevance for r in results))
-
-        # 2. Si nécessaire, essayer avec des paramètres plus souples
-        if not has_valid_results and config.adaptive_recall:
-            #st.info("🔄 Adaptation des paramètres de recherche sémantique...")
-            
-            for mode in [SearchMode.BALANCED, SearchMode.THOROUGH, SearchMode.EXHAUSTIVE]:
-                if mode.value <= config.mode.value:
-                    continue
-                    
-                rse_params = self._get_rse_params(mode)
-                if config.mode != SearchMode.EXHAUSTIVE:
-                    rse_params = self._adjust_params_for_recall(rse_params)
-                    
-                results = kb.query(
-                    search_queries=[query],
-                    metadata_filter=metadata_filter,
-                    rse_params=rse_params
+            metadata_filter = None
+            if filters:
+                metadata_filter = MetadataFilter(
+                    field=filters.get("field", ""),
+                    operator=filters.get("operator", "equals"),
+                    value=filters.get("value", "")
                 )
-                
-                if results and any(r.get('score', 0) >= config.min_relevance for r in results):
-                    has_valid_results = True
-                    st.success("✅ Résultats trouvés avec paramètres adaptés")
-                    break
 
-        # 3. Si toujours aucun résultat valide, activer le fallback
-        if not has_valid_results and config.enable_fallback:
-            #st.warning("⚠️ Aucun résultat pertinent trouvé - Activation de la recherche alternative")
-            fallback_results = await self._combined_fallback_search(
-                query=query,
-                kb=kb,
+            results = kb.query(
+                search_queries=[query],
                 metadata_filter=metadata_filter,
-                config=config
+                rse_params="balanced"  # Utiliser les paramètres par défaut
             )
-            if fallback_results:
-                st.success(f"✅ {len(fallback_results)} résultats trouvés via recherche alternative")
-                return fallback_results
-            
-            st.error("❌ Aucun résultat trouvé même après recherche alternative")
-            return []
 
-        # 4. Traitement des résultats sémantiques (uniquement si nous avons des résultats valides)
-        if not has_valid_results:
-            return []
+            # S'assurer qu'on retourne toujours une liste, même vide
+            if not results:
+                return []
 
-        # Conversion des résultats sémantiques en DocumentReference
-        doc_references = []
-        for r in results:
-            if r.get('score', 0) < config.min_relevance:
-                continue
+            # Transformer les résultats en DocumentReference
+            doc_references = []
+            for r in results:
+                doc_title = kb.chunk_db.get_document_title(r["doc_id"], r["chunk_start"]) or ""
+                doc_info = kb.chunk_db.get_document(r["doc_id"])
                 
-            doc_title = kb.chunk_db.get_document_title(r["doc_id"], r["chunk_start"]) or ""
-            doc_info = kb.chunk_db.get_document(r["doc_id"])
-            
-            doc_references.append(
-                DocumentReference(
-                    doc_id=r["doc_id"],
-                    doc_title=doc_title,
-                    text=r["text"],
-                    relevance_score=r["score"],
-                    page_numbers=(r.get("chunk_page_start"), r.get("chunk_page_end")),
-                    metadata=doc_info.get('metadata', {}) if doc_info else {}
-                )
-            )
+                # Protection contre les None
+                if r.get("doc_id") and "chunk_start" in r:
+                    doc_references.append(
+                        DocumentReference(
+                            doc_id=r["doc_id"],
+                            doc_title=doc_title,
+                            text=r.get("text", ""),
+                            relevance_score=r.get("score", 0.0),
+                            page_numbers=(r.get("chunk_page_start"), r.get("chunk_page_end")),
+                            metadata=doc_info.get('metadata', {}) if doc_info else {}
+                        )
+                    )
 
-        # Limitation du nombre de segments par document
-        if doc_references and config.max_segments_per_doc > 0:
-            filtered_refs = []
-            doc_count = defaultdict(int)
-            
-            for ref in sorted(doc_references, key=lambda x: x.relevance_score, reverse=True):
-                if doc_count[ref.doc_id] < config.max_segments_per_doc:
-                    filtered_refs.append(ref)
-                    doc_count[ref.doc_id] += 1
-            
-            doc_references = filtered_refs
+            return doc_references
 
-        if doc_references:
-            st.success(f"✅ {len(doc_references)} résultats pertinents trouvés")
-        return sorted(doc_references, key=lambda x: x.relevance_score, reverse=True)
+        except Exception as e:
+            print(f"Erreur lors de la recherche: {str(e)}")
+            return []  # Retourner une liste vide en cas d'erreur au lieu de None
     
     async def multi_kb_search(
         self,
@@ -424,7 +367,7 @@ class SearchAgent:
         search_contexts = []
         total_kbs = len(kb_mappings)
         
-        #st.info(f"🔍 Recherche dans {total_kbs} bases de connaissances")
+        st.info(f"🔍 Recherche dans {total_kbs} bases de connaissances")
         
         for idx, mapping in enumerate(kb_mappings, 1):
             # Charger les informations de la base
@@ -462,7 +405,7 @@ class SearchAgent:
             )
 
             if results:
-                #st.success(f"✅ {len(results)} résultats trouvés dans {kb_title}")
+                st.success(f"✅ {len(results)} résultats trouvés dans {kb_title}")
                 search_contexts.append(SearchContext(
                     kb_id=mapping.kb_id,
                     results=results,

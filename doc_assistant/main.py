@@ -44,13 +44,17 @@ async def main():
             st.title("🛠️ Configuration")
             
             # Création des onglets principaux
-            tab_llm, tab_filter, tab_docs, tab_kb = st.tabs([
+            tab_docs, tab_llm, tab_filter, tab_kb = st.tabs([
+                "📚 Documents",
                 "🤖 Modèle LLM",
                 "🔍 Filtres",
-                "📚 Documents",
-                "⚙️ Gestion KB"
+                "⚙️ Gestion Bases"
             ])
-            
+            # Onglet visualisation des documents
+            with tab_docs:
+                doc_viewer = DocumentViewerComponent(kb_manager)
+                doc_viewer.render()
+                
             # Onglet configuration LLM
             with tab_llm:
                 llm = llm_selector.render()
@@ -60,11 +64,6 @@ async def main():
                 filter_tab = FilterTab(kb_manager)
                 active_filters = filter_tab.render()
                 
-            # Onglet visualisation des documents
-            with tab_docs:
-                doc_viewer = DocumentViewerComponent(kb_manager)
-                doc_viewer.render()
-
             # Onglet gestion des bases de connaissances
             with tab_kb:
                 kb_tabs = st.tabs([
@@ -91,7 +90,7 @@ async def main():
                     delete_kb.render()
 
         # Interface de chat principale
-        st.title("💬 Assistant Documentaire")
+        st.title("💬 Assistant Documentaire Demo")
         
         # Initialisation des agents avec le LLM sélectionné
         query_mapper = QueryKBMapper(kb_manager, llm)

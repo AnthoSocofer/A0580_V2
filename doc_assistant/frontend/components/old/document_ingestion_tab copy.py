@@ -8,8 +8,6 @@ from functools import lru_cache
 import time
 from backend.kb_management.manager import KnowledgeBaseManager
 from dsrag.dsparse.file_parsing.element_types import default_element_types
-import os
-
 
 class DocumentIngestionComponent:
     """Composant optimisé pour l'ingestion de documents"""
@@ -144,7 +142,6 @@ class DocumentIngestionComponent:
                 tmp_file.flush()
                 
                 try:
-
                     # Enrichissement des métadonnées
                     metadata = config.pop('metadata', {})
                     metadata.update({
@@ -427,154 +424,8 @@ class DocumentIngestionComponent:
             self._update_progress(progress_key, 'error', error_msg)
             return False, error_msg
 
-    def _process_folder_recursive(self, folder_path: str, kb_id: str, config: dict, allowed_extensions: List[str]) -> Tuple[int, int]:
-        """
-        Traite récursivement un dossier pour ingérer tous les PDFs.
-        
-        Args:
-            folder_path: Chemin du dossier à traiter
-            kb_id: ID de la base de connaissances
-            config: Configuration d'ingestion
-            allowed_extensions: Extensions de fichiers autorisées
-        
-        Returns:
-            Tuple[int, int]: (nombre de fichiers traités avec succès, nombre total de fichiers)
-        """
-        success_count = 0
-        total_files = 0
-        
-        for root, _, files in os.walk(folder_path):
-            for filename in files:
-                if any(filename.lower().endswith(ext) for ext in allowed_extensions):
-                    total_files += 1
-                    file_path = os.path.join(root, filename)
-                    
-                    # Créer une clé unique pour suivre la progression
-                    progress_key = f"{filename}_{time.time()}"
-                    
-                    try:
-                        # Lecture du fichier
-                        with open(file_path, 'rb') as file:
-                            file_content = file.read()
-                            
-                        # Créer un objet temporaire similaire à UploadedFile de Streamlit
-                        class TempUploadFile:
-                            def __init__(self, name, content):
-                                self.name = name
-                                self._content = content
-                            def read(self):
-                                return self._content
-                            def getvalue(self):
-                                return self._content
-                        
-                        temp_file = TempUploadFile(filename, file_content)
-                        
-                        # Utiliser le chemin relatif comme doc_id pour préserver la structure
-                        rel_path = os.path.relpath(file_path, folder_path)
-                        config['metadata'] = config.get('metadata', {})
-                        config['metadata'].update({
-                            'original_path': rel_path,
-                            'folder_structure': True
-                        })
-                        
-                        # Traiter le fichier
-                        success, _ = self._process_file_sync(
-                            file=temp_file,
-                            kb_id=kb_id,
-                            config=config,
-                            progress_key=progress_key
-                        )
-                        
-                        if success:
-                            success_count += 1
-                            
-                    except Exception as e:
-                        self._update_progress(
-                            progress_key,
-                            'error',
-                            f"Erreur lors du traitement de {filename}: {str(e)}"
-                        )
-                        continue
-                    
-        return success_count, total_files
-
-    def _process_uploaded_directory(
-        self,
-        files: List[Any],  # Modification ici pour accepter les fichiers uploadés
-        kb_id: str,
-        config: Dict
-    ) -> Tuple[int, int]:
-        """
-        Traite un ensemble de fichiers uploadés représentant un dossier.
-        
-        Args:
-            files: Liste des fichiers uploadés via Streamlit
-            kb_id: ID de la base de connaissances
-            config: Configuration d'ingestion
-            
-        Returns:
-            Tuple[int, int]: (nombre de succès, nombre total)
-        """
-        success_count = 0
-        total_files = 0
-        
-        # Organiser les fichiers par structure de dossier
-        file_structure = {}
-        for uploaded_file in files:
-            # Nettoyer le chemin et créer la structure
-            clean_path = uploaded_file.name.replace('\\', '/').lstrip('/')
-            parts = clean_path.split('/')
-            
-            # Vérifier l'extension
-            if not any(clean_path.lower().endswith(ext) for ext in 
-                      ([".pdf"] if config.get("use_vlm", False) else [".pdf", ".docx", ".txt", ".md"])):
-                continue
-                
-            file_structure[clean_path] = uploaded_file
-            total_files += 1
-
-        # Traiter chaque fichier
-        with st.progress(0) as progress_bar:
-            for idx, (file_path, file) in enumerate(file_structure.items()):
-                try:
-                    # Mise à jour des métadonnées avec le chemin
-                    current_config = config.copy()
-                    current_config['metadata'] = current_config.get('metadata', {})
-                    current_config['metadata'].update({
-                        'original_path': file_path,
-                        'folder_structure': True,
-                        'directory_upload': True
-                    })
-                    
-                    # Clé unique pour le suivi
-                    progress_key = f"{file_path}_{time.time()}"
-                    
-                    # Traiter le fichier
-                    success, _ = self._process_file_sync(
-                        file=file,
-                        kb_id=kb_id,
-                        config=current_config,
-                        progress_key=progress_key
-                    )
-                    
-                    if success:
-                        success_count += 1
-                        
-                    # Mise à jour de la barre de progression
-                    progress_bar.progress((idx + 1) / total_files)
-                    
-                except Exception as e:
-                    self._update_progress(
-                        progress_key,
-                        'error',
-                        f"Erreur lors du traitement de {file_path}: {str(e)}"
-                    )
-                    continue
-                
-        return success_count, total_files
-
     def render(self):
-        """Interface principale pour l'ingestion de documents"""
+        """Interface principale synchrone pour l'ingestion de documents"""
         st.header("📥 Ingestion de Documents")
 
         # Configuration
@@ -600,206 +451,43 @@ class DocumentIngestionComponent:
 
         # Types de fichiers acceptés
         accepted_types = ["pdf"] if use_vlm else ["pdf", "docx", "txt", "md"]
-
-        # Tabs pour les différentes méthodes d'upload
-        upload_tab, directory_tab = st.tabs(["📄 Fichiers individuels", "📁 Dossier complet"])
         
-        with upload_tab:
-            # Zone de dépôt de fichiers individuels (code existant)
-            uploaded_files = st.file_uploader(
-                "📄 Déposez vos fichiers",
-                accept_multiple_files=True,
-                type=accepted_types
-            )
+        # Zone de dépôt de fichiers
+        uploaded_files = st.file_uploader(
+            "📄 Déposez vos fichiers",
+            accept_multiple_files=True,
+            type=accepted_types
+        )
 
-            if uploaded_files and selected_kb:
-                if st.button("📤 Démarrer l'ingestion", type="primary", key="single_upload"):
-                    progress_bar = st.progress(0)
-                    status_text = st.empty()
-                    
-                    total = len(uploaded_files)
-                    success_count = 0
-                    
-                    for idx, file in enumerate(uploaded_files):
-                        progress_key = f"{file.name}_{time.time()}"
-                        success, _ = self._process_file_sync(
-                            file=file,
-                            kb_id=selected_kb,
-                            config=config.copy(),
-                            progress_key=progress_key
-                        )
-                        
-                        if success:
-                            success_count += 1
-                        
-                        progress_bar.progress((idx + 1) / total)
-                        status_text.text(f"Traitement: {idx + 1}/{total} fichiers")
-                    
-                    if success_count == total:
-                        st.success(f"✅ {success_count} documents ajoutés avec succès!")
-                    else:
-                        st.warning(f"⚠️ {success_count}/{total} documents traités avec succès")
-
-        with directory_tab:
-            st.write("📁 Sélectionnez un dossier contenant des documents")
-            
-            # Construction de l'arborescence à partir du dossier ./docs
-            docs_path = Path("./docs")
-            if not docs_path.exists():
-                st.warning("⚠️ Le dossier ./docs n'existe pas. Veuillez le créer et y placer vos documents.")
-                return
+        if uploaded_files and selected_kb:
+            if st.button("📤 Démarrer l'ingestion", type="primary"):
+                progress_bar = st.progress(0)
+                status_text = st.empty()
                 
-            # Récupération de l'arborescence
-            directories = [d for d in docs_path.glob("**/*") if d.is_dir()]
-            # Ajouter le dossier racine
-            all_dirs = [docs_path] + directories
-            # Formater les chemins pour l'affichage
-            dir_options = {str(d): d.relative_to(docs_path) if d != docs_path else Path(".") 
-                        for d in all_dirs}
-            
-            # Sélection du dossier
-            selected_dir = st.selectbox(
-                "Sélectionnez un dossier",
-                options=list(dir_options.keys()),
-                format_func=lambda x: str(dir_options[x])
-            )
-            
-            if selected_dir and selected_kb:
-                # Afficher la structure du dossier sélectionné
-                selected_path = Path(selected_dir)
-                pdf_files = list(selected_path.glob("**/*.pdf"))
+                total = len(uploaded_files)
+                success_count = 0
                 
-                if not pdf_files:
-                    st.warning("⚠️ Aucun fichier PDF trouvé dans ce dossier")
-                else:
-                    st.write(f"📊 {len(pdf_files)} fichiers PDF détectés")
-                    
-                    with st.expander("📂 Voir la structure détectée", expanded=False):
-                        # Organiser les fichiers par sous-dossiers
-                        files_by_dir = {}
-                        for pdf in pdf_files:
-                            rel_dir = pdf.parent.relative_to(selected_path)
-                            if rel_dir not in files_by_dir:
-                                files_by_dir[rel_dir] = []
-                            files_by_dir[rel_dir].append(pdf.name)
-                        
-                        # Afficher l'arborescence
-                        for dir_path, files in sorted(files_by_dir.items()):
-                            if dir_path == Path("."):
-                                st.text("📁 /")
-                            else:
-                                st.text(f"📁 {dir_path}")
-                            for file in sorted(files):
-                                st.text(f"    📄 {file}")
-                    
-                    # Options d'ingestion
-                    recursive = st.checkbox(
-                        "🔄 Inclure les sous-dossiers", 
-                        value=True,
-                        help="Traiter également les fichiers dans les sous-dossiers"
+                for idx, file in enumerate(uploaded_files):
+                    progress_key = f"{file.name}_{time.time()}"
+                    success, _ = self._process_file_sync(
+                        file=file,
+                        kb_id=selected_kb,
+                        config=config.copy(),
+                        progress_key=progress_key
                     )
                     
-                    if st.button("📤 Ingérer le dossier", type="primary", key="directory_process"):
-                        with st.spinner("🔄 Traitement du dossier en cours..."):
-                            # Déterminer les fichiers à traiter
-                            pattern = "**/*.pdf" if recursive else "*.pdf"
-                            files_to_process = list(selected_path.glob(pattern))
-                            
-                            if config.get("use_vlm", False):
-                                process_files = files_to_process
-                            else:
-                                # Si pas de VLM, inclure aussi les autres types de fichiers
-                                for ext in [".docx", ".txt", ".md"]:
-                                    files_to_process.extend(selected_path.glob(f"**/*{ext}" if recursive else f"*{ext}"))
-                            
-                            success_count = 0
-                            total = len(files_to_process)
-                            
-                            if total == 0:
-                                st.warning("⚠️ Aucun fichier compatible trouvé dans le dossier")
-                                return
-                                
-                            progress_bar = st.progress(0)
-                            
-                            for idx, file_path in enumerate(files_to_process):
-                                try:
-                                    # Créer un identifiant relatif pour le document
-                                    rel_path = file_path.relative_to(selected_path)
-                                    doc_id = os.path.basename(str(rel_path))
-                                    
-                                    # Préparer la configuration selon la structure attendue
-                                    parsing_config = {}
-                                    if config.get("use_vlm"):
-                                        parsing_config = {
-                                            "use_vlm": True,
-                                            "vlm_config": {
-                                                "provider": config.get("vlm_provider"),
-                                                "model": config.get("vlm_model"),
-                                                "exclude_elements": config.get("exclude_elements", []),
-                                                "element_types": config.get("element_types", [])
-                                            }
-                                        }
-                                        
-                                        if config.get("vlm_provider") == "vertex_ai":
-                                            parsing_config["vlm_config"].update({
-                                                "project_id": config.get("project_id"),
-                                                "location": config.get("location")
-                                            })
-                                    # Lire la taille du fichier
-                                    file_size = file_path.stat().st_size
-                                    # Préparation des métadonnées
-                                    metadata = {
-                                        'original_path': str(rel_path),
-                                        'folder_structure': True,
-                                        'source_directory': str(selected_path.name),
-                                        'file_size': file_size,  # Ajout de la taille
-                                        'file_type': file_path.suffix.lower()[1:],  # Ajout de l'extension
-                                        'upload_timestamp': datetime.now().isoformat()
-                                    }
-                                    metadata.update(config.get('metadata', {}))
-
-                                    try:
-                                        success = self.kb_manager.add_document(
-                                            kb_id=selected_kb,
-                                            file_path=str(file_path),
-                                            doc_id=doc_id,
-                                            metadata=metadata,
-                                            auto_context_config={
-                                                "use_generated_title": False,
-                                                "get_document_summary": config.get('auto_context', True),
-                                                "get_section_summaries": config.get('auto_context', True) and config.get('semantic_sectioning', True)
-                                            },
-                                            semantic_sectioning_config={
-                                                "use_semantic_sectioning": config.get('semantic_sectioning', True),
-                                                "llm_provider": "openai",
-                                                "language": "fr"
-                                            },
-                                            chunk_size=config.get('chunk_size', 800),  # Passé directement
-                                            min_length_for_chunking=config.get('min_length', 1600)  # Passé directement
-                                        )
-                                        
-                                        if success:
-                                            success_count += 1
-                                        
-                                        # Mise à jour de la progression
-                                        progress_bar.progress((idx + 1) / total)
-                                        
-                                    except Exception as e:
-                                        st.error(f"Erreur lors du traitement de {rel_path}: {str(e)}")
-                                        continue
-
-                                except Exception as e:
-                                    st.error(f"Erreur lors du traitement du fichier {file_path.name}: {str(e)}")
-                                    continue
-                            
-                            # Affichage du résultat final
-                            if success_count == total:
-                                st.success(f"✅ {success_count} documents ajoutés avec succès!")
-                            else:
-                                st.warning(
-                                    f"⚠️ {success_count}/{total} documents traités avec succès. "
-                                    "Consultez les messages d'erreur ci-dessus pour plus de détails."
-                                )
-
+                    if success:
+                        success_count += 1
+                    
+                    # Mise à jour de la progression
+                    progress = (idx + 1) / total
+                    progress_bar.progress(progress)
+                    status_text.text(f"Traitement: {idx + 1}/{total} fichiers")
+                
+                if success_count == total:
+                    st.success(f"✅ {success_count} documents ajoutés avec succès!")
+                else:
+                    st.warning(f"⚠️ {success_count}/{total} documents traités avec succès")
+        
         # Affichage de la progression
         self._render_progress()

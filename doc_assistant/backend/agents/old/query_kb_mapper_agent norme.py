@@ -30,14 +30,16 @@ class QueryKBMapper:
             f"- Base '{kb['id']}' - {kb['title']}: {kb['description']}"
             for kb in available_kbs
         ])
-        
+        #4. Si la base "normes" est pertinente, l'inclure en priorité
+
         return f"""En tant qu'expert en analyse de documents, tu dois évaluer la pertinence des bases de connaissances pour la question posée.
 
 RÈGLES IMPORTANTES:
 1. Retourner EXACTEMENT le format JSON demandé, sans texte additionnel
 2. Maximum 2 bases les plus pertinentes
 3. Score minimum de 0.6 obligatoire
-4. Les bases mentionnées dans la question reçoivent un score de 1.0
+4. Si la base "normes" est pertinente, l'inclure en priorité
+5. Les bases mentionnées dans la question reçoivent un score de 1.0
 
 Question: "{query}"
 
