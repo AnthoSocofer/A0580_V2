@@ -114,7 +114,7 @@ venv.bak/
 
 # sub_folders
 docs/
-doc_assistant/data
+
 notebooks
 doc_assistant/tests
 test
